@@ -1,0 +1,340 @@
+/*
+ * 导航是水平的 Boundary Bar，不是 Sidebar —— 侧栏会把缝挤到一边。
+ * Gateway 选择器居中，因为它决定这条缝属于谁。
+ */
+
+.bar {
+  flex: 0 0 auto;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--plane);
+  position: relative;
+  z-index: 20;
+}
+
+/*
+ * 1280 与 1024 收紧的是外围密度（PRD §24「缩减外围说明和次级信息」），
+ * 控件本身的高度不变。
+ * 高度只随断点变化，不随窗口态或滚动变化 —— 顶栏不做粘顶动画（REQ-UI-004 AC4）。
+ */
+@media (max-width: 1439px) {
+  .bar {
+    height: 50px;
+    gap: 14px;
+    padding: 0 16px;
+  }
+}
+
+@media (max-width: 1279px) {
+  .bar {
+    height: 46px;
+    gap: 10px;
+    padding: 0 12px;
+  }
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.brandName {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.nav {
+  display: flex;
+  gap: 2px;
+}
+
+.navItem {
+  height: 30px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--text-2);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.navItem:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.navItemActive {
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* 宽屏上导航项写的是名字，图标不出现 —— 两样一起摆是重复。 */
+.navIcon {
+  display: none;
+}
+
+/*
+ * 1024：文字换成图标 + tooltip（REQ-UI-004 ①）。
+ *
+ * 名字用 clip 藏起来而不是 display:none：它仍然是这个链接的可及名称，
+ * 换成图标之后键盘与读屏用户读到的还是「Gate」。
+ */
+@media (max-width: 1279px) {
+  .navItem {
+    position: relative;
+    width: 30px;
+    height: 26px;
+    padding: 0;
+    border-radius: 5px;
+    justify-content: center;
+  }
+
+  .navIcon {
+    display: block;
+  }
+
+  .navLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/*
+ * 待审批角标。
+ *
+ * 用 --wait 而不是 --block：有人在等，不是出了错。数字本身就是文字，
+ * 颜色不是这里唯一的信息载体。
+ */
+.pending {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--wait);
+  border: 1px solid var(--wait-edge);
+  border-radius: 99px;
+  padding: 0 5px;
+}
+
+/* 1024：角标收成角点，数字仍留给读屏（REQ-UI-004 ①）。 */
+@media (max-width: 1279px) {
+  .pending {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    width: 5px;
+    height: 5px;
+    padding: 0;
+    border: 0;
+    border-radius: 99px;
+    background: var(--wait);
+  }
+
+  .pendingCount {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+.gatewaySlot {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.gateway {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--raised);
+}
+
+/* 选择器里的缝徽标：一小段缝，提示这个 Gateway 就是这条边界的主人。 */
+.gatewaySeam {
+  width: 3px;
+  height: 14px;
+  border-radius: 1px;
+  background: var(--seam);
+}
+
+.gatewayHost {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/*
+ * 1024：收起 host。
+ *
+ * 设计稿在这个宽度上只留一个色点，但颜色不能是状态的唯一载体，
+ * 因此让出去的是次级信息 host，
+ * 「已连接 / 未连接」这几个字留下。
+ */
+@media (max-width: 1279px) {
+  .gatewayHost {
+    display: none;
+  }
+}
+
+/*
+ * 状态点。颜色取自 REQ-GATEWAY-002 AC2 指定的令牌，旁边永远有文字标签 ——
+ * 颜色不能是信息的唯一载体。
+ */
+.gatewayDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--text-4);
+}
+
+.gatewayDotConnected {
+  background: var(--lease);
+}
+
+.gatewayDotConnecting {
+  background: var(--wait);
+}
+
+.gatewayDotDisconnected {
+  background: var(--block);
+}
+
+.gatewayState {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.control {
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  font-size: 11.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.control:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.controlHint {
+  color: var(--text-4);
+}
+
+.iconButton {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.iconButtonOpen {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* 菜单挂在触发它的按钮下面，因此这一层要有定位上下文。 */
+.more {
+  position: relative;
+  display: flex;
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  width: 216px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--raised);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menuItem:hover {
+  background: var(--hover-wash);
+  color: var(--text);
+}
+
+.menuLabel {
+  flex: 1;
+}
+
+.menuHint {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-4);
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 99px;
+  border: 1px solid var(--line-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-2);
+}

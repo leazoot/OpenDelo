@@ -1,0 +1,151 @@
+/*
+ * 设计令牌是全站唯一的色彩与层级来源。
+ * 组件中不得出现任何字面色值，由 scripts/check-tokens.mjs 在 CI 中强制。
+ * 本文件是该扫描的唯一白名单。
+ */
+
+:root,
+[data-theme='dark'] {
+  /* 层级 */
+  --bg: #0c0d10;
+  --plane: #111216;
+  --raised: #17181d;
+  --folio: #191716;
+  --core: #0a0a0d;
+  --desk: #07080b;
+
+  /* 文字 */
+  --text: #f0ece6;
+  --text-2: #969399;
+  --text-3: #6b686e;
+  --text-4: #47454a;
+
+  /* 线 */
+  --line: rgba(240, 236, 230, 0.08);
+  --line-2: rgba(240, 236, 230, 0.16);
+  --line-3: rgba(240, 236, 230, 0.26);
+
+  /* 语义色 */
+  --human: #c98a70;
+  --lease: #719783;
+  --wait: #be9861;
+  --block: #bf6265;
+  --block-wash: rgba(191, 98, 101, 0.1);
+  --lease-wash: rgba(113, 151, 131, 0.07);
+  --lease-edge: rgba(113, 151, 131, 0.24);
+  --wait-edge: rgba(190, 152, 97, 0.35);
+  --hover-wash: rgba(240, 236, 230, 0.03);
+
+  /* 按钮 */
+  --btn: #e7e0d8;
+  --btn-text: #171619;
+  --btn-hover: #f4efe9;
+  --dot: #2a2b31;
+  --focus: #e7e0d8;
+
+  /* 缝 */
+  --seam: linear-gradient(180deg, rgba(48, 55, 90, 0.85), rgba(23, 22, 25, 0.9) 46%, rgba(52, 10, 6, 0.8));
+  --seam-off: linear-gradient(
+    180deg,
+    rgba(71, 69, 74, 0.5),
+    rgba(23, 22, 25, 0.85) 46%,
+    rgba(71, 69, 74, 0.4)
+  );
+  --seam-l: rgba(240, 236, 230, 0.14);
+  --seam-r: rgba(240, 236, 230, 0.1);
+  --seam-in: rgba(7, 8, 11, 0.9);
+  --glow-1: rgba(48, 55, 90, 0.3);
+  --glow-2: rgba(80, 16, 10, 0.22);
+  --tick: rgba(240, 236, 230, 0.12);
+  --trace: rgba(240, 236, 230, 0.13);
+  --core-top: rgba(48, 55, 90, 0.7);
+  --core-bot: rgba(52, 10, 6, 0.8);
+
+  /* 文书 */
+  --folio-grain: rgba(240, 236, 230, 0.028);
+  --folio-edge: rgba(240, 236, 230, 0.13);
+
+  /* 遮罩与阴影 */
+  --scrim: rgba(7, 8, 11, 0.44);
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 14px 34px rgba(0, 0, 0, 0.35);
+
+  /* 浏览器 chrome 模拟 */
+  --chrome: #1c1d22;
+  --chrome-2: #141519;
+  --chrome-line: rgba(240, 236, 230, 0.1);
+  --chrome-text: #8e8b90;
+}
+
+[data-theme='light'] {
+  --bg: #f4f1ec;
+  --plane: #fbf9f5;
+  --raised: #eae6de;
+  --folio: #f8f3e9;
+  --core: #1e1b19;
+  --desk: #dad5cc;
+
+  --text: #201e1c;
+  --text-2: #55514e;
+  --text-3: #6e6965;
+  --text-4: #7e7873;
+
+  --line: rgba(32, 30, 28, 0.1);
+  --line-2: rgba(32, 30, 28, 0.18);
+  --line-3: rgba(32, 30, 28, 0.3);
+
+  --human: #a2573a;
+  --lease: #4a7256;
+  --wait: #8a6420;
+  --block: #a33b3f;
+  --block-wash: rgba(163, 59, 63, 0.09);
+  --lease-wash: rgba(74, 114, 86, 0.07);
+  --lease-edge: rgba(74, 114, 86, 0.28);
+  --wait-edge: rgba(138, 100, 32, 0.38);
+  --hover-wash: rgba(32, 30, 28, 0.035);
+
+  --btn: #262320;
+  --btn-text: #f6f3ed;
+  --btn-hover: #37332e;
+  --dot: #d6d0c7;
+  --focus: #262320;
+
+  --seam: linear-gradient(180deg, #3a4166, #2b2724 46%, #3e1611);
+  --seam-off: linear-gradient(180deg, #8a8580, #6e6965 46%, #8a8580);
+  --seam-l: rgba(240, 236, 230, 0.28);
+  --seam-r: rgba(0, 0, 0, 0.18);
+  --seam-in: rgba(0, 0, 0, 0.55);
+  --glow-1: rgba(48, 55, 90, 0.14);
+  --glow-2: rgba(120, 30, 18, 0.1);
+  --tick: rgba(32, 30, 28, 0.16);
+  --trace: rgba(32, 30, 28, 0.18);
+  --core-top: rgba(48, 55, 90, 0.85);
+  --core-bot: rgba(62, 22, 17, 0.85);
+
+  --folio-grain: rgba(32, 30, 28, 0.03);
+  --folio-edge: rgba(32, 30, 28, 0.14);
+
+  --scrim: rgba(80, 72, 62, 0.3);
+  --shadow: 0 22px 54px rgba(60, 50, 38, 0.16);
+  --shadow-sm: 0 12px 30px rgba(60, 50, 38, 0.12);
+
+  --chrome: #dedad2;
+  --chrome-2: #cfcac1;
+  --chrome-line: rgba(32, 30, 28, 0.14);
+  --chrome-text: #5e5a56;
+}
+
+:root {
+  /* 字族。设计稿的四套字体各有明确分工。 */
+  --font-ui: 'Instrument Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-serif: 'Newsreader', serif;
+  --font-serif-cjk: 'Noto Serif SC', 'Newsreader', serif;
+
+  /* 缝的几何。这些值不随断点变化。 */
+  --seam-width: 5px;
+  --seam-tick-width: 3px;
+  --seam-tick-offset: 4px;
+  --seam-tick-pitch: 34px;
+  --seam-glow-width: 120px;
+}

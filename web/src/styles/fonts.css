@@ -1,0 +1,18 @@
+/*
+ * 四套字体全部本地自托管，不引用任何 CDN。
+ * 每个包都按 unicode-range 分片，浏览器只下载实际用到的分片。
+ *
+ * Noto Serif SC 取 400.css 而非 chinese-simplified-400.css：后者是不分片的单个
+ * 1.4MB 文件，任何一个汉字都会触发全量下载；前者拆成 101 个带 unicode-range 的
+ * 分片，实际只会取到用到的那几片。
+ */
+
+@import '@fontsource/instrument-sans/latin.css';
+@import '@fontsource/instrument-sans/latin-ext.css';
+
+@import '@fontsource/ibm-plex-mono/latin-400.css';
+@import '@fontsource/ibm-plex-mono/latin-500.css';
+
+@import '@fontsource-variable/newsreader/wght.css';
+
+@import '@fontsource/noto-serif-sc/400.css';

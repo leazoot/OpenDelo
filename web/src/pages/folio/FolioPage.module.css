@@ -1,0 +1,379 @@
+/*
+ * Access Folio（设计稿 §04）。
+ *
+ * 卷宗以缝为中心展开：书脊压在缝上，两页向左右各推开一半。缝本身没有移动，
+ * 也不该移动 —— 它是空间常量（REQ-UI-002）。
+ */
+.folio {
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 背景对比降一档。缝与边界栏仍然可见：没有跳到新页面，只是切开了一道口子。 */
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+}
+
+.sheet {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(846px, calc(100% - 48px));
+  display: flex;
+  box-shadow: var(--shadow);
+  border-radius: 6px;
+}
+
+.sheet:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.arrival,
+.consequence {
+  flex: 1;
+  min-width: 0;
+  background: var(--folio);
+  border: 1px solid var(--folio-edge);
+  padding: 26px 28px;
+  display: flex;
+  flex-direction: column;
+}
+
+.arrival {
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+  transform-origin: right center;
+  animation: pageL 340ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.consequence {
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  transform-origin: left center;
+  animation: pageR 340ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* 书脊即缝：凭据核心留在这里，两页都看不见它。 */
+.spine {
+  flex: 0 0 3px;
+  position: relative;
+  background: linear-gradient(180deg, var(--core-top), var(--core-bot));
+}
+
+.core {
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: 38%;
+  height: 24%;
+  background: var(--human);
+  opacity: 0.55;
+  animation: breathe 4.5s ease-in-out infinite;
+}
+
+.eyebrow {
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.headline {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  line-height: 32px;
+  margin-top: 12px;
+}
+
+.subject {
+  font-family: var(--font-mono);
+  font-size: 19px;
+}
+
+.settled {
+  margin-top: 12px;
+  padding: 8px 11px;
+  border: 1px solid var(--wait-edge);
+  border-radius: 6px;
+  font-size: 11.5px;
+  line-height: 18px;
+  color: var(--text-2);
+}
+
+.fields {
+  margin: 18px 0 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.field {
+  display: flex;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.label {
+  flex: 0 0 82px;
+  color: var(--text-3);
+}
+
+.value {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.accent {
+  color: var(--human);
+}
+
+.changeRow {
+  display: flex;
+  gap: 10px;
+}
+
+.changeField {
+  color: var(--text-3);
+}
+
+/* 旧值压一档：对照里要先看见的是将要写进去的那个值。 */
+.changeBefore {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.changeValue {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+/* 当前值还没有被查询过。不说这一句，新值会被当成「原来的样子」。 */
+.baseline {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-3);
+}
+
+.source {
+  margin-top: 18px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-2);
+}
+
+.outcomes {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.outcome {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-2);
+}
+
+.mark {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+}
+
+.granted {
+  border-color: var(--lease-edge);
+  color: var(--lease);
+}
+
+.withheld {
+  border-color: var(--line-2);
+  color: var(--text-3);
+}
+
+.note {
+  border-color: var(--line-2);
+  color: var(--text-2);
+}
+
+.lease {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--hover-wash);
+}
+
+.leaseRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.leaseTab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 28px;
+  padding: 0 11px 0 9px;
+  border: 1px solid var(--lease-edge);
+  border-left: 2px solid var(--lease);
+  border-radius: 0 5px 5px 0;
+  background: var(--lease-wash);
+  font-size: 11.5px;
+}
+
+.leaseLeft {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--lease);
+}
+
+.leaseHint {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.foot {
+  margin-top: auto;
+  padding-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.back {
+  height: 32px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.back:hover {
+  background: var(--hover-wash);
+}
+
+.key {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-4);
+}
+
+.keyHint {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.loading {
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.skeletonRow {
+  display: block;
+  height: 14px;
+  margin-top: 14px;
+  border-radius: 6px;
+  background: var(--hover-wash);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+.noticeBody {
+  flex: 1;
+  background: var(--folio);
+  border: 1px solid var(--folio-edge);
+  border-radius: 6px;
+  padding: 26px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.noticeTitle {
+  font-family: var(--font-serif);
+  font-size: 19px;
+  color: var(--text);
+}
+
+.noticeBlurb {
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-3);
+}
+
+/* 两页从书脊向外推开。只动 transform 与 opacity（REQ-UI-010 AC3）。 */
+@keyframes pageL {
+  from {
+    transform: scaleX(0.04);
+    opacity: 0;
+  }
+
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pageR {
+  from {
+    transform: scaleX(0.04);
+    opacity: 0;
+  }
+
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}

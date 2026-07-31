@@ -1,0 +1,164 @@
+/*
+ * Gate 分成两块：舞台与 Inspector。
+ *
+ * 缝在**舞台**里居中，Inspector 在旁边。收窄 Inspector 或展开抽屉压缩的是舞台，
+ * 缝在舞台里的位置不变（REQ-UI-002）。
+ */
+.gate {
+  height: 100%;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 缝的定位容器。overflow:hidden 使辉光带不溢出到边界栏。 */
+.stage {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.sides {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  display: flex;
+  padding: 18px 26px 0;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.outside {
+  flex: 1;
+}
+
+.inside {
+  flex: 1;
+  text-align: right;
+}
+
+/*
+ * 穿越流。
+ *
+ * 绝对定位在缝之上，左右各占一半 —— 三态切换只改这一层的内容，
+ * 缝与刻度带在它下面，位置不受影响（REQ-APPROVAL-006 AC3）。
+ */
+.stream {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 56px;
+  /* 下缘让给账本条：穿越流不该滚到账本底下去。 */
+  bottom: 88px;
+  overflow-y: auto;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  padding: 0;
+  margin: 0;
+}
+
+/*
+ * 空态与错误态。
+ *
+ * 落在缝外一侧并右对齐，与请求卡片同一条边线 —— 说明出现在请求本该出现的位置。
+ */
+.notice {
+  width: 50%;
+  padding-right: 14px;
+  margin-top: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  text-align: right;
+}
+
+.noticeTitle {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  color: var(--text-2);
+}
+
+.noticeBlurb {
+  max-width: 300px;
+  font-size: 11.5px;
+  line-height: 18px;
+  color: var(--text-3);
+}
+
+/* 骨架与真实行等高等宽，数据到达时不产生位移。 */
+.skeletonRow {
+  height: 78px;
+  display: flex;
+  align-items: center;
+  list-style: none;
+}
+
+.skeletonOutside {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 14px;
+}
+
+.skeletonCard {
+  width: 326px;
+  height: 52px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--hover-wash);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@media (max-width: 1439px) {
+  .skeletonCard {
+    width: 272px;
+  }
+}
+
+@media (max-width: 1279px) {
+  .skeletonCard {
+    width: 214px;
+  }
+}
+
+.skeletonInside {
+  flex: 1;
+  min-width: 0;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/*
+ * 只给读屏的播报区。
+ *
+ * `display:none` 与 `visibility:hidden` 会把它一起从无障碍树里拿掉，
+ * 播报就成了空的。这几行与 BoundaryBar 在 1024 上藏导航文字用的是同一套
+ * —— CSS Modules 的 `composes` 不能出现在媒体查询里，抽不成一份公共的。
+ */
+.announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

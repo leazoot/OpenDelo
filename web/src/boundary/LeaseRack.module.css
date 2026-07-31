@@ -1,0 +1,164 @@
+/*
+ * 缝内侧的 Lease 架（设计稿 §01）。
+ *
+ * 定位在缝的右侧一点点：标签贴着缝的内侧面，像挂在门内的一排牌子。
+ * 高度有下限 —— 最后一条到期时缝内侧不该塌下去（REQ-LEASE-003 AC2）。
+ */
+.rack {
+  position: absolute;
+  left: 50%;
+  bottom: 104px;
+  margin-left: 16px;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.title {
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  margin-bottom: 2px;
+}
+
+.quiet {
+  font-size: 11.5px;
+  color: var(--text-3);
+  max-width: 240px;
+  line-height: 17px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+/*
+ * 1024：Lease 架改为横向滚动（PRD §24「Lease Shelf 可水平滚动」）。
+ *
+ * 可用的宽度就是缝到右缘那一段：架子挂在缝的内侧，不该越过缝去占外侧的地方。
+ */
+@media (max-width: 1279px) {
+  .list {
+    flex-direction: row;
+    max-width: calc(50vw - 32px);
+    overflow-x: auto;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+  }
+}
+
+/* 左边一道 2px 的实线是缝的颜色渗进标签的那一侧。 */
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--lease-edge);
+  border-left: 2px solid var(--lease);
+  border-radius: 0 5px 5px 0;
+  background: var(--lease-wash);
+  cursor: grab;
+  width: fit-content;
+  color: var(--text);
+}
+
+.tab:hover {
+  background: var(--hover-wash);
+}
+
+.tab:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* 快到期时整条标签换成等待色 —— 颜色之外，时间数字本身也在说这件事。 */
+.tabSoon {
+  border-color: var(--wait-edge);
+  border-left-color: var(--wait);
+}
+
+.service {
+  font-size: 12px;
+}
+
+.scope {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.left {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--lease);
+}
+
+.leftSoon {
+  color: var(--wait);
+}
+
+.confirm {
+  margin-top: 10px;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--raised);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.confirmTitle {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.confirmBlurb {
+  font-size: 11.5px;
+  line-height: 17px;
+  color: var(--text-2);
+}
+
+.confirmActions {
+  display: flex;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.confirmPrimary {
+  flex: 1;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--btn);
+  color: var(--btn-text);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.confirmPrimary:hover {
+  background: var(--btn-hover);
+}
+
+.confirmCancel {
+  flex: 1;
+  height: 28px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  cursor: pointer;
+}

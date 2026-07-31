@@ -1,0 +1,20 @@
+# SQL → 类型安全 Go 代码：SQL 写在 .sql 文件里，不散落在 Go 字符串中。
+#
+# schema 直接指向 goose 迁移目录：生成代码的依据与数据库的实际形状是同一份文件，
+# 不存在「schema 副本忘了同步」这种偏差。
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "internal/store/migrations"
+    queries: "internal/store/queries"
+    gen:
+      go:
+        package: "queries"
+        out: "internal/store/queries"
+        # 每个查询显式列字段，不需要接口抽象或预编译语句缓存。
+        emit_interface: false
+        emit_prepared_queries: false
+        # 空结果返回空切片而不是 nil：调用方少一处 nil 判断。
+        emit_empty_slices: true
+        # 领域对象与视图模型由上层定义，生成的结构体不直接序列化
+        emit_json_tags: false

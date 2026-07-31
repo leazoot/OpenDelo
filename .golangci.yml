@@ -1,0 +1,54 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # 八个 linter，删除任何一个都要先改技术栈登记。
+    - errcheck # 禁止吞掉错误
+    - govet
+    - staticcheck
+    - gosec
+    - bodyclose # resp.Body 必须关闭
+    - rowserrcheck # rows.Err() 必须检查
+    - sqlclosecheck # rows.Close() 必须调用
+    - noctx # 阻塞操作必须接受 context
+
+  settings:
+    errcheck:
+      # 空白标识符赋值同样视为吞错，不允许用 _ = err 绕过。
+      check-blank: true
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # 结构体字段顺序以可读性优先
+    gosec:
+      excludes:
+        # G104 与 errcheck 重复，由 errcheck 统一报告。
+        - G104
+
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      # 测试代码允许弱随机与硬编码凭据哨兵。
+      - path: (_test\.go|^test/)
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gofumpt:
+      module-path: github.com/Runcoor/opendelo
+      extra-rules: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

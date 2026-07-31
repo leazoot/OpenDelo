@@ -1,0 +1,61 @@
+/* 高风险放行前的解锁（REQ-APPROVAL-005）。它属于决定那一段，不另起一个面板。 */
+.prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.field {
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--desk);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.field:disabled {
+  opacity: 0.4;
+}
+
+.action {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.action:hover:enabled {
+  background: var(--hover-wash);
+}
+
+.action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 说明而不是警报：红色留给「被阻断」（REQ-UI-012）。 */
+.failure {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-3);
+}

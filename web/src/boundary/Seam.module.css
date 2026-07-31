@@ -1,0 +1,127 @@
+/*
+ * 缝的几何。left:50% + 负的一半宽度 使缝心恒等于父容器中心，
+ * 因此收窄断点时压缩的是两侧列宽，缝不会移动。
+ */
+
+.glow {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: var(--seam-glow-width);
+  margin-left: calc(var(--seam-glow-width) / -2);
+  background: radial-gradient(60% 46% at 50% 34%, var(--glow-1), transparent 70%),
+    radial-gradient(56% 40% at 50% 76%, var(--glow-2), transparent 72%);
+  pointer-events: none;
+  animation: seamBreath 7s ease-in-out infinite;
+}
+
+.seam {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: var(--seam-width);
+  margin-left: calc(var(--seam-width) / -2);
+  pointer-events: none;
+}
+
+.fill {
+  position: absolute;
+  inset: 0;
+  background: var(--seam);
+  border-left: 1px solid var(--seam-l);
+  border-right: 1px solid var(--seam-r);
+}
+
+/* 缝内侧的暗线，让缝看起来有厚度而不是一条贴纸。 */
+.inner {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--seam-in);
+}
+
+/* 刻度带贴在缝的外侧，密度不随断点变化。 */
+.ticks {
+  position: absolute;
+  left: calc(var(--seam-tick-offset) * -1);
+  top: 0;
+  bottom: 0;
+  width: var(--seam-tick-width);
+  background: repeating-linear-gradient(180deg, var(--tick) 0 1px, transparent 1px var(--seam-tick-pitch));
+}
+
+/*
+ * 离线态只换颜色与呼吸节奏。left / width / margin-left 一概不出现在这里 ——
+ * 缝的位置是空间常量，离线不是让它挪动的理由（REQ-UI-002）。
+ */
+.fillOff {
+  background: var(--seam-off);
+}
+
+.glowOff {
+  /* 辉光收敛成一次缓慢的脉冲：缝还在，只是那一侧暂时没人应答。 */
+  animation: offPulse 4.5s ease-in-out infinite;
+}
+
+@keyframes offPulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes seamBreath {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/*
+ * 凭据核心（设计稿的 corePulse）。
+ *
+ * 缝正中的一小段。有东西穿过去时它跳一次 —— 那一刻凭据在缝内被取用又被清零，
+ * 界面上唯一能看见的就是这一下。只动 opacity 与 transform，不触发布局
+ * （REQ-UI-010 AC3）。
+ */
+.core {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 46px;
+  margin-top: -23px;
+  background: linear-gradient(180deg, var(--core-top), var(--core-bot));
+  opacity: 0;
+  animation: corePulse 1.6s ease-out 1;
+}
+
+@keyframes corePulse {
+  0%,
+  46% {
+    opacity: 0;
+    transform: scaleY(0.4);
+  }
+
+  52% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+
+  60%,
+  100% {
+    opacity: 0;
+    transform: scaleY(0.4);
+  }
+}

@@ -1,0 +1,272 @@
+/*
+ * Inspector（设计稿 §01）。
+ *
+ * 它是缝右侧的一列，**不是**缝所在容器的一部分 —— 缝在自己的容器里居中，
+ * 这一列在旁边，因此它的宽度变化压缩的是舞台，缝在舞台里的位置不动
+ * （REQ-UI-002）。
+ */
+.inspector {
+  flex: 0 0 300px;
+  border-left: 1px solid var(--line);
+  background: var(--plane);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* 1280：收窄到 232，统计块让出去（REQ-UI-004）。 */
+@media (max-width: 1439px) {
+  .inspector {
+    flex: 0 0 232px;
+  }
+
+  .stats {
+    display: none;
+  }
+}
+
+/*
+ * 1024：变成右侧抽屉。
+ *
+ * 用 translateX 移进移出而不是改变宽度：舞台的宽度因此不随开合变化，
+ * 缝在开合过程中一动不动（REQ-UI-004 ②）。
+ */
+@media (max-width: 1279px) {
+  .inspector {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 30;
+    width: 260px;
+    flex: none;
+    box-shadow: var(--shadow);
+    transform: translateX(100%);
+    transition: transform 160ms ease;
+  }
+
+  .drawerOpen {
+    transform: translateX(0);
+  }
+}
+
+.head {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.empty {
+  font-size: 11.5px;
+  line-height: 18px;
+  color: var(--text-3);
+  margin-top: 8px;
+}
+
+.subject {
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-top: 8px;
+}
+
+.detail {
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-top: 3px;
+}
+
+.rows {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.rowLabel {
+  color: var(--text-3);
+}
+
+/*
+ * 值一律换行，不用省略号。
+ *
+ * 这一栏在 1280 上只有 232 宽，而「文书」这一行装的是判断理由这样的整句文案 ——
+ * 英文比中文长两倍有余，省略号会把「为什么」正好切在半路上（REQ-UI-008 AC2）。
+ * `anywhere` 是给不可断的长 ID 用的：宁可断在中间，也不要把行撑出这一栏。
+ */
+.rowValue {
+  margin: 0;
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.accent {
+  color: var(--human);
+}
+
+.stats {
+  padding: 16px 18px;
+  flex: 1;
+}
+
+.statsTitle {
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.statList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 11px;
+  padding: 0;
+  list-style: none;
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.statValue {
+  flex: 0 0 46px;
+  font-family: var(--font-mono);
+}
+
+.passed {
+  color: var(--lease);
+}
+
+.confirmed {
+  color: var(--wait);
+}
+
+.refused {
+  color: var(--block);
+}
+
+.actions {
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.risk {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.note {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-3);
+}
+
+.folio {
+  height: 34px;
+  border-radius: 6px;
+  background: var(--btn);
+  color: var(--btn-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.folio:hover {
+  background: var(--btn-hover);
+}
+
+.key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.decide {
+  display: flex;
+  gap: 8px;
+}
+
+.allow,
+.deny,
+.once {
+  flex: 1;
+  height: 30px;
+  border-radius: 6px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.allow {
+  border: 1px solid var(--lease-edge);
+  color: var(--lease);
+}
+
+.allow:hover:enabled {
+  background: var(--lease-wash);
+}
+
+.deny {
+  border: 1px solid var(--line-2);
+  color: var(--block);
+}
+
+.deny:hover:enabled {
+  background: var(--block-wash);
+}
+
+.once {
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  height: 28px;
+  font-size: 11.5px;
+}
+
+.once:hover:enabled {
+  background: var(--hover-wash);
+}
+
+.allow:disabled,
+.deny:disabled,
+.once:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

@@ -1,0 +1,234 @@
+/*
+ * 一次穿越（设计稿 §01）。
+ *
+ * 两半各占一列，缝在中间。卡片贴着缝的外侧，目的地贴着缝的内侧 ——
+ * 收窄时压缩的是卡片宽度，缝的位置不动（REQ-UI-002）。
+ */
+
+.row {
+  position: relative;
+  height: 78px;
+  display: flex;
+  align-items: center;
+  list-style: none;
+}
+
+.outside {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 14px;
+}
+
+.card {
+  width: 326px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  padding: 11px 13px;
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+}
+
+/* 1280：卡片收窄，缝宽与缝位不变（REQ-UI-004）。 */
+@media (max-width: 1439px) {
+  .card {
+    width: 272px;
+  }
+}
+
+@media (max-width: 1279px) {
+  .card {
+    width: 214px;
+  }
+}
+
+.mark {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--line-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.body {
+  min-width: 0;
+  flex: 1;
+}
+
+.heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.agent {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.risk {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-4);
+  white-space: nowrap;
+}
+
+.action {
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inside {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+  gap: 12px;
+}
+
+/*
+ * 轨迹：一条虚线，从缝指向目的地。
+ *
+ * 虚线的颜色说明这次穿越的结论，宽度不随结论变化 —— 被拒绝的请求
+ * 走的是同样长的一段路，只是没能过去。
+ */
+.trace {
+  position: relative;
+  flex: 0 0 auto;
+  --trace-width: 200px;
+  --passage-trace: var(--trace);
+  width: var(--trace-width);
+  height: 1px;
+  background: repeating-linear-gradient(90deg, var(--passage-trace) 0 5px, transparent 5px 10px);
+}
+
+@media (max-width: 1279px) {
+  .trace {
+    --trace-width: 56px;
+  }
+}
+
+/*
+ * 穿越的光点（设计稿的 reqL）。
+ *
+ * 设计稿的关键帧动的是 left，这里改成 translateX：只用 transform 与 opacity，
+ * 不触发布局（REQ-UI-010 AC3）。视觉一致，代价只是位移改用百分比表达。
+ */
+.spark {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 14px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--passage-trace);
+  opacity: 0;
+  animation: reqL 2.6s ease-in-out infinite;
+}
+
+@keyframes reqL {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+
+  8% {
+    opacity: 0.9;
+  }
+
+  46% {
+    transform: translateX(calc(var(--trace-width) - 14px));
+    opacity: 0.9;
+  }
+
+  54% {
+    transform: translateX(calc(var(--trace-width) - 14px));
+    opacity: 0;
+  }
+
+  100% {
+    transform: translateX(calc(var(--trace-width) - 14px));
+    opacity: 0;
+  }
+}
+
+.destination {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.service {
+  font-size: 12.5px;
+}
+
+.verdict {
+  font-size: 11px;
+  margin-top: 2px;
+  color: var(--text-2);
+}
+
+/* 选中只加一道更亮的边，不改任何几何。 */
+.cardSelected {
+  border-color: var(--line-3);
+  background: var(--hover-wash);
+}
+
+/* 结论只改颜色与底色，不改任何几何。 */
+.waiting .card {
+  border-color: var(--wait-edge);
+}
+
+.waiting .trace {
+  --passage-trace: var(--wait);
+}
+
+.waiting .verdict {
+  color: var(--wait);
+}
+
+.allowed .trace {
+  --passage-trace: var(--lease);
+}
+
+.allowed .verdict {
+  color: var(--lease);
+}
+
+.denied .card {
+  background: var(--block-wash);
+}
+
+.denied .trace {
+  --passage-trace: var(--block);
+}
+
+.denied .verdict {
+  color: var(--block);
+}
+
+.cancelled .trace {
+  --passage-trace: var(--text-4);
+}
+
+.cancelled .verdict {
+  color: var(--text-3);
+}

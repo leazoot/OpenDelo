@@ -1,0 +1,41 @@
+# 数据目录（本地运行产生，含审计与保险库，绝不入库）
+/.opendelo/
+/data/
+
+# 配置目录（含会话令牌）
+/.config/
+/config.local.*
+
+# SQLite 数据库及其 WAL 附属文件
+*.db
+*.db-wal
+*.db-shm
+
+# 环境变量文件（可能含真实凭据）
+.env
+.env.*
+
+# 前端构建产物与依赖。
+# web/embedded/.gitkeep 不在忽略之列：go:embed 要求目录在编译期存在且至少匹配到
+# 一个文件，否则未构建前端时整个仓库编译不过（见 web/console.go）。
+/web/embedded/dist/
+/web/node_modules/
+
+# Go 构建产物与本地工具链
+/bin/
+/.bin/
+/dist/
+*.test
+*.out
+
+# 编辑器与系统文件
+.DS_Store
+.idea/
+.vscode/
+
+# 开发协议、规则、需求文档与设计稿。
+# 它们只在本机参与开发，不随仓库分发；`/.github/` 不在此列，CI 需要它。
+/CLAUDE.md
+/.claude/
+/docs/
+/design/
