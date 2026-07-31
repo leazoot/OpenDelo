@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"regexp"
 	"runtime"
+	"strings"
 
 	_ "modernc.org/sqlite" // 全仓库唯一允许导入 SQLite 驱动的位置，由 test/arch 强制
 
@@ -142,8 +144,23 @@ func dataSourceName(path string, kind poolKind) string {
 		query.Set("_txlock", "immediate")
 	}
 
-	dsn := url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}
+	dsn := url.URL{Scheme: "file", Path: fileURIPath(path), RawQuery: query.Encode()}
 	return dsn.String()
+}
+
+// driveLetter 匹配 Windows 的盘符前缀，例如 `C:\` 或 `C:/`。
+var driveLetter = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+
+// fileURIPath 把本地路径转成 file URI 的 path 部分。
+//
+// Windows 的 `C:\x` 不以斜杠开头，url.URL 会把 `C:` 当成 authority，
+// SQLite 拒绝带 authority 的 file URI（"invalid uri authority"）。
+// 转成 `/C:/x` 之后两个平台生成的 DSN 形状一致。
+func fileURIPath(path string) string {
+	if !driveLetter.MatchString(path) {
+		return path
+	}
+	return "/" + strings.ReplaceAll(path, `\`, "/")
 }
 
 // ensureFile 保证数据库文件存在且权限为 0600。
