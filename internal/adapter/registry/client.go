@@ -71,6 +71,12 @@ type Client struct {
 	wait     Waiter
 }
 
+// BaseURL 是这个客户端的根地址。
+//
+// 声明落库时要记下出站去哪里，而地址在构造时就固定了 —— 从这里读，
+// 而不是让每个 Adapter 再存一份，两份迟早会不一致。
+func (c *Client) BaseURL() string { return c.baseURL.String() }
+
 // Request 是一次出站请求。
 //
 // Credential 是明文，只在本包内活到请求发出为止；调用方负责 Zero。

@@ -166,6 +166,14 @@ var consequences = map[Action]Settlement{
 	ActionAlwaysAsk:          {Allowed: true, Learn: trust.BehaviorAlwaysAsk},
 }
 
+// Allows 回答一个操作是不是放行类的。
+//
+// 认不出的操作一律不算放行：新增取值时它会被当成拒绝，
+// 而不是在某个默认分支里被悄悄当成允许。
+func Allows(action Action) bool {
+	return consequences[action].Allowed
+}
+
 // Settle 写入用户给出的结果。
 //
 // 「同一个审批只能被处理一次」由仓储的条件更新保证，本包不先读一次状态再判断 ——

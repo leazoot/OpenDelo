@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Runcoor/opendelo/internal/core/agentauth"
 	"github.com/Runcoor/opendelo/internal/core/decision"
+	"github.com/Runcoor/opendelo/internal/platform/audit"
 	"github.com/Runcoor/opendelo/internal/platform/settings"
 	"github.com/Runcoor/opendelo/internal/transport/httpapi"
 	"github.com/Runcoor/opendelo/test/fixtures"
@@ -81,6 +83,27 @@ func TestTrustAgent_RequiresAnExplicitConfirmation(t *testing.T) {
 	again := all.call(t, http.MethodPost, target, `{"confirmed":true}`)
 	if again.Code != http.StatusOK {
 		t.Errorf("重复确认返回 %d", again.Code)
+	}
+
+	/*
+	 * AC3 的后半句：账本上要留得下这件事（回归）。
+	 *
+	 * `agent.trusted` 这个类型定义了、也登记进了白名单，但从来没有任何地方写它 ——
+	 * 确认一个 Agent 会改变风险引擎的输入（从这一刻起它的写操作有了被自动放行的
+	 * 可能），却在账本上没有痕迹。2026-08-04 人工验收撞出。
+	 */
+	events, err := all.backend.Events.Events(t.Context(), time.Time{}, 50)
+	if err != nil {
+		t.Fatalf("列出审计事件失败：%v", err)
+	}
+	trusted := 0
+	for _, event := range events {
+		if event.Type == audit.EventAgentTrusted {
+			trusted++
+		}
+	}
+	if trusted == 0 {
+		t.Error("确认了一个 Agent，账本上却没有 agent.trusted —— 这次信任提升无从追溯")
 	}
 }
 

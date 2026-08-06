@@ -479,6 +479,56 @@ func TestDecide_UnknownMode_IsDenied(t *testing.T) {
 
 // ——— 禁止列表（REQ-DECIDE-004）———
 
+/*
+ * TestDecide_LegitimateOperationsAreNotMistakenForForbiddenOnes（回归）
+ *
+ * 关键词原本是**子串**匹配：`manage_token` 归一化成 `managetoken`，
+ * 里面既有 `get`（横跨 manage 与 token 的接缝）也有 `token`，于是被判成
+ * 「Agent 在索取凭据」而**永久拒绝、不提供审批入口**。
+ *
+ * Cloudflare 的 `manage_token` 是 PRD §12.3 明确列出的**高风险操作** ——
+ * 要人点头，不是不许做。判进禁止列表等于把一个产品功能永久关掉，
+ * 而用户在界面上连拒绝以外的选择都没有。
+ *
+ * 每一类禁止操作都配一组「不该命中」的相邻操作：
+ * 只有该命中的用例时，把关键词表清空一样能全绿。
+ */
+func TestDecide_LegitimateOperationsAreNotMistakenForForbiddenOnes(t *testing.T) {
+	cases := []struct {
+		service   string
+		operation string
+		why       string
+	}{
+		// 造一个新的凭据不是读走现成的（credential_request 的边界）。
+		{"cloudflare", "manage_token", "轮换 Token 是 PRD §12.3 的高风险操作，要人点头而不是永久拒绝"},
+		{"cloudflare", "create_token", "同上：造出来的不是现成的"},
+		{"github", "update_secret", "写入一个 Secret 不是读出它"},
+		{"github", "rotate_credential", "轮换同样是写"},
+		// 名词对但没有读动词。
+		{"cloudflare", "list_zones", "list 是读动词，但 zone 不是凭据"},
+		{"github", "get_repository", "同上"},
+		// vault_export 的边界：读的不是保险库，而且服务不是 OpenDelo 自己。
+		{"onepassword", "vault_backup_create", "备份是写，不是把库导出给 Agent"},
+		// 自身服务之外的操作不该被后三类碰到。
+		{"github", "audit_log.read", "GitHub 的审计日志不是 OpenDelo 的账本"},
+		{"cloudflare", "policy.list", "Cloudflare 的策略不是 OpenDelo 的权限"},
+		{"github", "settings.update", "改的是仓库设置，不是 OpenDelo 自己"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.service+"/"+testCase.operation, func(t *testing.T) {
+			input := lowRiskRead()
+			input.Scope.Scope.Service = testCase.service
+			input.Scope.Scope.Operation = testCase.operation
+
+			outcome := decision.Decide(input)
+			if outcome.Reason == decision.ReasonForbidden {
+				t.Errorf("被判进禁止列表的 %s —— %s", outcome.Forbidden, testCase.why)
+			}
+		})
+	}
+}
+
 func TestDecide_EveryForbiddenCategory_IsDenied(t *testing.T) {
 	cases := []struct {
 		service   string
@@ -489,6 +539,11 @@ func TestDecide_EveryForbiddenCategory_IsDenied(t *testing.T) {
 		{"github", "secret.get", decision.ForbiddenCredentialRequest},
 		{"github", "token.export", decision.ForbiddenCredentialRequest},
 		{"cloudflare", "api_key.reveal", decision.ForbiddenCredentialRequest},
+		// 分段之后仍然要认出来的三种写法：复合词、复数、驼峰。
+		{"github", "private_key.read", decision.ForbiddenCredentialRequest},
+		{"github", "list_secrets", decision.ForbiddenCredentialRequest},
+		{"github", "readCredential", decision.ForbiddenCredentialRequest},
+		{"onepassword", "list_vaults", decision.ForbiddenVaultExport},
 		{decision.SelfService, "vault.export", decision.ForbiddenVaultExport},
 		{"onepassword", "vault.list", decision.ForbiddenVaultExport},
 		{"macos", "keychain.dump", decision.ForbiddenVaultExport},

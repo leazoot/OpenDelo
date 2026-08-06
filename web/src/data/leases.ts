@@ -52,7 +52,13 @@ export function leaseOf(payload: LeasePayload): Lease {
   }
 }
 
-/** Scope JSON → 一行可读的描述。 */
+/**
+ * Scope JSON → 缝内侧那一排小标签上的一行字。
+ *
+ * 只说**这条授权覆盖了什么**：资源与操作。收敛出来的 Scope 有十一个维度，
+ * 把它们全铺开会得到一行读不懂的长串（两个 ULID、身份 ID、两个时间戳……），
+ * 而标签只有一行的位置。谁、什么时候、什么环境在 Inspector 与卷宗里回答。
+ */
 export function describeScope(scope: unknown): string {
   if (typeof scope === 'string') {
     return scope
@@ -60,11 +66,22 @@ export function describeScope(scope: unknown): string {
   if (typeof scope !== 'object' || scope === null) {
     return ''
   }
+
+  // 用 `in` 收窄而不是断言：断言会让「服务端改了字段名」这件事在类型上消失，
+  // 而它的表现是标签默默变空（项目 lint 也禁止 as）。
+  const resource = 'resource' in scope ? scope.resource : undefined
+  const operation = 'operation' in scope ? scope.operation : undefined
+
   const parts: string[] = []
-  for (const value of Object.values(scope)) {
-    if (typeof value === 'string' && value !== '') {
-      parts.push(value)
+  if (typeof resource === 'object' && resource !== null) {
+    for (const value of Object.values(resource)) {
+      if (typeof value === 'string' && value !== '') {
+        parts.push(value)
+      }
     }
+  }
+  if (typeof operation === 'string' && operation !== '') {
+    parts.push(operation)
   }
   return parts.join(' · ')
 }

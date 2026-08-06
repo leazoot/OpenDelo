@@ -60,6 +60,58 @@ func (a *proxyAudits) RecordBlocked(ctx context.Context, blocked proxy.Blocked) 
 	return err
 }
 
+// RecordExecuted 记一条经代理发出的执行。
+//
+// 与 8789 那条路（mcpCalls.record）同形：元数据、结果、上游真正答的状态码，
+// **不记**请求正文与响应正文。判决恒为 auto_allow —— 走到这里说明有一条
+// 已经签发的 Lease 罩着，8788 不做决策（REQ-PROXY-002）。
+func (a *proxyAudits) RecordExecuted(ctx context.Context, executed proxy.Executed) error {
+	outcome := audit.OutcomeSucceeded
+	if !executed.Succeeded {
+		// 上游答了但没答成也是一次执行：它发生过，可能已经改变了外部状态。
+		outcome = audit.OutcomeFailed
+	}
+
+	_, err := a.recorder.Record(ctx, audit.Event{
+		OperationID: logging.OperationIDFrom(ctx),
+		Type:        audit.EventAdapterExecuted,
+		AgentID:     executed.Caller.AgentID,
+		WorkspaceID: executed.Caller.WorkspaceID,
+		IdentityID:  executed.Grant.IdentityID,
+		Service:     executed.Route.Service,
+		Operation:   executed.Route.Operation,
+		Resource:    resourceText(executed.Route.Resource),
+		// 8788 不跑决策链路，因此没有收敛出 Scope —— 授权的范围在那条
+		// Lease 上，`lease_id` 指得到它。空对象是如实记录，不是省略。
+		ResolvedScope:  "{}",
+		Verdict:        audit.Verdict(decision.VerdictAutoAllow),
+		LeaseID:        executed.Grant.LeaseID,
+		Outcome:        outcome,
+		ResponseStatus: executed.UpstreamStatus,
+		Duration:       executed.Duration,
+		IsRedacted:     true,
+		Metadata:       executedMetadata(executed),
+	})
+	return err
+}
+
+// executedMetadata 带方法、主机、路径与是哪个面驱动的。
+//
+// `face` 与 8789 那条路成对：同一条链路上，两个面的执行在账本里除此之外
+// 看不出区别，而「Agent 是自己发的 HTTP 还是调的工具」正是排查时第一个要问的。
+func executedMetadata(executed proxy.Executed) string {
+	encoded, err := json.Marshal(map[string]string{
+		"method": executed.Target.Method,
+		"host":   executed.Target.Host,
+		"path":   executed.Target.Path,
+		"face":   "proxy",
+	})
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
 // blockedMetadata 只带方法、主机与路径。查询串不进来：REQ 的脱敏规则要求
 // 记录 URL 时只保留 path。
 func blockedMetadata(blocked proxy.Blocked) string {

@@ -109,8 +109,18 @@ func (f *faceServer) Serve(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		// 用 WithoutCancel：ctx 已经结束，再从它派生的话关闭余量会立刻到期。
+		// 余量用完就强制断开而不是报错，理由与 8787 那一面相同
+		// （internal/transport/httpapi/server.go 的 closeGracefully）。
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), faceShutdownGrace)
 		defer cancel()
-		return f.http.Shutdown(shutdownCtx)
+		if err := f.http.Shutdown(shutdownCtx); err != nil {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			f.logger.WarnContext(shutdownCtx, "优雅关闭的余量用完，强制断开剩余连接",
+				slog.String("face", f.name))
+			return f.http.Close()
+		}
+		return nil
 	}
 }

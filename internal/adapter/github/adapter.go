@@ -70,6 +70,12 @@ func (a *Adapter) Service() string { return Service }
 
 func (a *Adapter) Kind() registry.Kind { return registry.KindGitHub }
 
+func (a *Adapter) BaseURL() string { return a.client.BaseURL() }
+
+// AuthScheme 是 Bearer：凭据以 Authorization 头注入，形式记在声明里，
+// 值只在执行的那一刻从 Provider 取。
+func (a *Adapter) AuthScheme() registry.AuthScheme { return registry.AuthBearer }
+
 // Capabilities 返回全部十三项声明。
 func (a *Adapter) Capabilities() []registry.Capability {
 	return append([]registry.Capability(nil), a.declarations...)
@@ -128,14 +134,17 @@ func (a *Adapter) Execute(
 	}
 	if response.StatusCode >= 400 {
 		return registry.Failure(request.OperationID,
-			upstreamError(response.StatusCode, request.OperationID)), nil
+			upstreamError(response.StatusCode, request.OperationID)).
+			FromUpstream(response.StatusCode), nil
 	}
 
 	data, err := a.render(capability, response.Body)
 	if err != nil {
-		return registry.Failure(request.OperationID, err), nil
+		return registry.Failure(request.OperationID, err).
+			FromUpstream(response.StatusCode), nil
 	}
-	return registry.Success(request.OperationID, data, nil), nil
+	return registry.Success(request.OperationID, data, nil).
+		FromUpstream(response.StatusCode), nil
 }
 
 // render 把响应体裁成允许返回的内容。

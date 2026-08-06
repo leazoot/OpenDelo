@@ -120,11 +120,25 @@ func TestRun_ChildEnvironment_CarriesASessionKey(t *testing.T) {
 	}
 }
 
+// unreachableGateway 建一个配置目录，其中的三个端口上**确实没有人在听**。
+//
+// 不能只用 initialized：run 从配置里读端口，配置里没写就去敲默认的 8787，
+// 于是「网关不在跑」这个前提取决于本机 8787 恰好没被别的程序占着。占着的时候
+// run 拿到的是那个程序的 404，走进「响应体不是预期的错误结构」那一支 ——
+// 断言看到的失败与被测的行为无关（R-36）。
+func unreachableGateway(t *testing.T) string {
+	t.Helper()
+
+	dir := initialized(t)
+	writePorts(t, dir, ports{web: freePort(t), agentProxy: freePort(t), mcp: freePort(t)})
+	return dir
+}
+
 func TestRun_WithoutARunningGateway_RefusesToStartTheChild(t *testing.T) {
 	// 网关不在时不能「照常启动、少个会话而已」：子进程的环境里已经没有凭据，
 	// 网关又不认识它，那样启动出来的是一个什么都做不了的 Agent，
 	// 而原因早已滚出屏幕。
-	dir := initialized(t)
+	dir := unreachableGateway(t)
 	marker := filepath.Join(t.TempDir(), "the-child-ran")
 
 	got := execute(t, t.Context(), "run", "--config-dir", dir,

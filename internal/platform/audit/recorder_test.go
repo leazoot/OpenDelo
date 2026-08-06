@@ -82,13 +82,14 @@ func assertCode(t *testing.T, err error, want apperr.Code) {
 func TestRecorder_EveryDeclaredEventType_IsWritten(t *testing.T) {
 	// REQ-AUDIT-002 AC1：十类事件加需求点名的三个，再加 D-07 授权新增的
 	// agent.identity_mismatch 与 agent.trusted、D-14 授权新增的
-	// security.strong_auth_locked 与 D-16 授权新增的 trust.cleared，各写一次。
+	// security.strong_auth_locked、D-16 授权新增的 trust.cleared，以及
+	// REQ-CAP-003 的 approval.expired（人工验收发现它从未被接线），各写一次。
 	ctx := t.Context()
 	recorder, repository := newRecorder(t)
 
 	types := audit.EventTypes()
-	if len(types) != 17 {
-		t.Fatalf("事件类型有 %d 个，期望 17 个", len(types))
+	if len(types) != 18 {
+		t.Fatalf("事件类型有 %d 个，期望 18 个", len(types))
 	}
 
 	for _, eventType := range types {

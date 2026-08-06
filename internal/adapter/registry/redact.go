@@ -49,6 +49,23 @@ type Result struct {
 	Data        json.RawMessage  `json:"data,omitempty"`
 	Changes     []ResourceChange `json:"changes,omitempty"`
 	Error       *ResultError     `json:"error,omitempty"`
+
+	// UpstreamStatus 是外部服务真正答的状态码，0 表示没有拿到过响应。
+	//
+	// `json:"-"`：**不给 Agent**。给 Agent 的状态码只有 200 与 502
+	// （见 ExchangeReply.StatusCode），原始状态码本身就是外部服务的内部信息。
+	// 它存在只为账本与服务端日志 —— 排查一次失败时，「GitHub 答了 422」
+	// 与「网关不可用」是两条完全不同的线索，而后者曾经是账本上唯一看得见的。
+	UpstreamStatus int `json:"-"`
+}
+
+// FromUpstream 记下外部服务答的状态码。
+//
+// 单独一个方法而不是加进 Success/Failure 的参数：那两个构造函数也用在
+// 「请求根本没发出去」的路径上，多一个参数就多一处可以顺手填个 0 敷衍过去。
+func (r Result) FromUpstream(status int) Result {
+	r.UpstreamStatus = status
+	return r
 }
 
 // ResourceChange 是一次操作造成的资源变化，供审批与账本展示。

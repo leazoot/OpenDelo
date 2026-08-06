@@ -70,6 +70,42 @@ func (q *Queries) CreateCredentialReference(ctx context.Context, arg CreateCrede
 	return i, err
 }
 
+const getCredentialReferenceByCoordinates = `-- name: GetCredentialReferenceByCoordinates :one
+SELECT id, provider_id, provider_item_ref, field,
+    service, account_label, metadata, capabilities,
+    health_status, last_verified_at, created_at, updated_at
+FROM credential_references
+WHERE provider_id = ? AND provider_item_ref = ? AND field = ?
+`
+
+type GetCredentialReferenceByCoordinatesParams struct {
+	ProviderID      string
+	ProviderItemRef string
+	Field           string
+}
+
+// Serves the reuse lookup during registration. The coordinates carry a unique
+// index, so one credential is one row no matter how many identities lean on it.
+func (q *Queries) GetCredentialReferenceByCoordinates(ctx context.Context, arg GetCredentialReferenceByCoordinatesParams) (CredentialReference, error) {
+	row := q.db.QueryRowContext(ctx, getCredentialReferenceByCoordinates, arg.ProviderID, arg.ProviderItemRef, arg.Field)
+	var i CredentialReference
+	err := row.Scan(
+		&i.ID,
+		&i.ProviderID,
+		&i.ProviderItemRef,
+		&i.Field,
+		&i.Service,
+		&i.AccountLabel,
+		&i.Metadata,
+		&i.Capabilities,
+		&i.HealthStatus,
+		&i.LastVerifiedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getCredentialReferenceByID = `-- name: GetCredentialReferenceByID :one
 SELECT id, provider_id, provider_item_ref, field,
     service, account_label, metadata, capabilities,

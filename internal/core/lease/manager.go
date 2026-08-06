@@ -234,6 +234,15 @@ func encodeGrant(granted scope.Scope) (resourceScope, capabilities string, err e
 	return string(encodedScope), string(encodedCapabilities), nil
 }
 
+// ScopeOf 读回一条已签发授权的范围。
+//
+// 导出是给决策链路用的：已签发的授权要参与后续决策（D-17），而 `core/decision`
+// 只比较 Scope，不认识 Lease 这个类型。读不懂的授权由调用方丢掉 ——
+// 罩不住任何东西的授权留着只会让「为什么没命中」查不出来。
+func ScopeOf(granted Lease) (scope.Scope, error) {
+	return decodeGrant(granted.ResourceScope)
+}
+
 // decodeGrant 读回签发时的范围。
 //
 // 解析失败或十个维度不全时返回错误而不是放行：读不懂自己签发的范围时，

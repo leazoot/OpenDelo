@@ -10,9 +10,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Runcoor/opendelo/internal/core/gateway"
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
+	"github.com/Runcoor/opendelo/internal/platform/clock"
+	"github.com/Runcoor/opendelo/internal/platform/ulid"
 	"github.com/Runcoor/opendelo/internal/transport/mcpsrv"
 )
 
@@ -83,6 +86,7 @@ func newHarness(t *testing.T) harness {
 		Authenticator: auth,
 		Calls:         calls,
 		Logger:        slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		IDs:           ulid.New(clock.NewFixed(time.Unix(0, 0).UTC())),
 	})
 	if err != nil {
 		t.Fatalf("构造 MCP Server 失败：%v", err)
@@ -451,6 +455,7 @@ func TestNewServer_MissingAnyDependency_IsRefused(t *testing.T) {
 		Authenticator: &stubAuth{},
 		Calls:         &stubCalls{},
 		Logger:        slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		IDs:           ulid.New(clock.NewFixed(time.Unix(0, 0).UTC())),
 	}
 
 	for name, blank := range map[string]func(*mcpsrv.Options){
@@ -459,6 +464,7 @@ func TestNewServer_MissingAnyDependency_IsRefused(t *testing.T) {
 		"Authenticator": func(o *mcpsrv.Options) { o.Authenticator = nil },
 		"Calls":         func(o *mcpsrv.Options) { o.Calls = nil },
 		"Logger":        func(o *mcpsrv.Options) { o.Logger = nil },
+		"IDs":           func(o *mcpsrv.Options) { o.IDs = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			options := complete

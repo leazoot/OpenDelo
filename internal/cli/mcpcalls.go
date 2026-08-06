@@ -202,9 +202,12 @@ func (c *mcpCalls) execute(
 		Operation: authorized.Operation,
 		// 身份取自 Lease 而不是重新匹配一次：这条 Lease 就是「用这个身份做这件事」
 		// 的那份授权，重新匹配等于让执行有机会用上另一个身份。
-		IdentityID:  authorized.IdentityID,
-		Resource:    authorized.Resource,
-		Body:        nil,
+		IdentityID: authorized.IdentityID,
+		Resource:   authorized.Resource,
+		// 正文就是这次请求的期望变更 —— 也正是用户在卷宗上看到并批准的那份内容。
+		// 曾经写死成 nil：风险照着它算、卷宗照着它显示、人照着它点头，
+		// 然后出站的时候它掉了，外部服务收到一个空正文的写请求。
+		Body:        []byte(running.DesiredChange),
 		OperationID: request.OperationID,
 	})
 	if sendErr != nil {
@@ -218,8 +221,11 @@ func (c *mcpCalls) execute(
 		outcome, next = audit.OutcomeFailed, pipeline.StatusFailed
 	}
 
+	// 记的是**上游真正答的**那个数字，不是给 Agent 的 200/502 映射。
+	// 状态码不是报文：对外的错误码与消息一个字不变，而账本上少了它，
+	// 排查一次失败时看得见的就只有「网关不可用」（R-44）。
 	if err := c.record(ctx, running, granted, authorized,
-		outcome, reply.StatusCode, c.clock.Now().Sub(started)); err != nil {
+		outcome, reply.UpstreamStatus, c.clock.Now().Sub(started)); err != nil {
 		return mcpsrv.CallOutcome{}, err
 	}
 	if _, err := c.requests.AdvanceRequest(ctx,

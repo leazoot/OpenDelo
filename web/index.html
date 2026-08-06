@@ -7,6 +7,37 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!--
+      跑不动 Console 的浏览器看到的东西（REQ-NFR-003 AC2）。
+
+      两种跑不动的情况各有一条路，都不依赖打包出来的那份 JS ——
+      它正是这时候没有运行的那一份：
+
+        · 认不出 ESM 的浏览器不执行下面那个 type="module"，但会执行 nomodule
+          那一个，由它给根元素挂上标记。
+        · 关掉 JS 的浏览器两个都不执行，由 <noscript> 里的那张样式表顶上。
+
+      提示本身是静态 HTML，默认由 reset.css 隐藏。这样既不需要内联脚本
+      也不需要内联样式 —— Gateway 下发的 CSP 两者都不允许（scripts/check-csp.mjs）。
+      中英同时写出：这一刻 i18n 还没有机会运行。
+    -->
+    <div class="unsupported" id="unsupported">
+      <p class="unsupported-title">这个浏览器打不开 OpenDelo Console</p>
+      <p class="unsupported-blurb">
+        请换用 Chrome、Edge、Safari 或 Firefox 的最近两个大版本。
+        <strong>Gateway 仍在运行，已生效的授权与账本都不受影响。</strong>
+      </p>
+      <p class="unsupported-title" lang="en">This browser cannot open the OpenDelo Console</p>
+      <p class="unsupported-blurb" lang="en">
+        Use one of the last two major versions of Chrome, Edge, Safari or Firefox.
+        <strong>Your gateway keeps running; active grants and the ledger are unaffected.</strong>
+      </p>
+    </div>
+
+    <noscript><link rel="stylesheet" href="/unsupported.css" /></noscript>
+
+    <script nomodule src="/unsupported.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

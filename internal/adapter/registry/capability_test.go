@@ -239,6 +239,8 @@ type fakeAdapter struct {
 func (a fakeAdapter) Service() string                     { return a.service }
 func (a fakeAdapter) Kind() registry.Kind                 { return a.kind }
 func (a fakeAdapter) Capabilities() []registry.Capability { return a.capabilities }
+func (a fakeAdapter) BaseURL() string                     { return "https://example.invalid" }
+func (a fakeAdapter) AuthScheme() registry.AuthScheme     { return registry.AuthBearer }
 
 func githubAdapter() fakeAdapter {
 	return fakeAdapter{

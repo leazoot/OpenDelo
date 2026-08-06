@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -226,6 +227,102 @@ func TestProxyRecordBlocked_WritesMetadataWithoutTheQueryString(t *testing.T) {
 	}
 	if !strings.Contains(event.Metadata, "/repos/runcoor/opendelo") {
 		t.Errorf("元数据里没有路径：%q", event.Metadata)
+	}
+}
+
+func TestProxyRecordExecuted_LandsInTheLedgerAsAnExecution(t *testing.T) {
+	// R-47。8789（MCP）那条路一直在写 adapter.executed，8788 之前只有访问日志，
+	// 于是经代理的每一次成功转发在账本上都是无痕的。
+	h := newProxyHarness(t)
+	// 账本的 lease_id 是外键：凭空写一个字符串进去这条记录根本落不了地。
+	issued := issueLease(t, h, "read_repository", map[string]string{"owner": "runcoor", "repo": "opendelo"})
+
+	ctx := logging.WithOperationID(t.Context(), "operation_executed_test")
+	err := h.audits.RecordExecuted(ctx, proxy.Executed{
+		Caller: h.caller(),
+		Target: proxy.Target{
+			Host: "api.github.com", Method: "GET",
+			Path: "/repos/runcoor/opendelo",
+			// 有些服务把令牌放在查询串里 —— 它一路带到这里，但不该进账本。
+			Query: url.Values{"access_token": []string{sentinel.SentinelToken}},
+		},
+		Route: proxy.Route{
+			Service: "github", Operation: "read_repository",
+			Resource: map[string]string{"owner": "runcoor", "repo": "opendelo"},
+		},
+		Grant:          proxy.Grant{LeaseID: issued.ID, IdentityID: h.identityID},
+		UpstreamStatus: 201,
+		Succeeded:      true,
+		Duration:       250 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("记账失败：%v", err)
+	}
+
+	written, err := h.events.Events(ctx, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("读取账本失败：%v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("账本里有 %d 条记录，期望 1", len(written))
+	}
+
+	event := written[0]
+	switch {
+	case event.Type != audit.EventAdapterExecuted:
+		t.Errorf("事件类型为 %q，期望 adapter.executed", event.Type)
+	case event.Outcome != audit.OutcomeSucceeded:
+		t.Errorf("Outcome 为 %q，期望 succeeded", event.Outcome)
+	case event.LeaseID != issued.ID:
+		// 「凭什么发出去的」是事后唯一要问的问题。
+		t.Errorf("LeaseID 为 %q", event.LeaseID)
+	case event.ResponseStatus != 201:
+		// 记的是上游真答的那个数字，不是给 Agent 的 200/502 映射（R-44）。
+		t.Errorf("ResponseStatus 为 %d，期望 201", event.ResponseStatus)
+	case !strings.Contains(event.Metadata, `"face":"proxy"`):
+		// 与 8789 那条路成对：账本上两个面除此之外看不出区别。
+		t.Errorf("元数据里没有标出是哪个面：%q", event.Metadata)
+	case event.Duration != 250*time.Millisecond:
+		// 账本上「耗时」那一格是给人看的：0 ms 读起来是「这次没花时间」，
+		// 而不是「没测」（R-48）。
+		t.Errorf("耗时为 %v，期望 250ms", event.Duration)
+	}
+	// 查询串不进账本 —— 有些服务把令牌放在那里。
+	if strings.Contains(event.Metadata, sentinel.SentinelToken) {
+		t.Errorf("查询串进了账本：%q", event.Metadata)
+	}
+}
+
+func TestProxyRecordExecuted_UpstreamRefusal_IsRecordedAsFailed(t *testing.T) {
+	// 上游答了但没答成也是一次执行。一律记成成功会让账本看不出这次调用其实没成，
+	// 而账本是唯一的事后依据。
+	h := newProxyHarness(t)
+	issued := issueLease(t, h, "create_repository", map[string]string{"owner": "runcoor"})
+
+	ctx := logging.WithOperationID(t.Context(), "operation_executed_failed")
+	err := h.audits.RecordExecuted(ctx, proxy.Executed{
+		Caller:         h.caller(),
+		Target:         proxy.Target{Host: "api.github.com", Method: "POST", Path: "/repos"},
+		Route:          proxy.Route{Service: "github", Operation: "create_repository"},
+		Grant:          proxy.Grant{LeaseID: issued.ID, IdentityID: h.identityID},
+		UpstreamStatus: 422,
+	})
+	if err != nil {
+		t.Fatalf("记账失败：%v", err)
+	}
+
+	written, err := h.events.Events(ctx, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("读取账本失败：%v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("账本里有 %d 条记录，期望 1", len(written))
+	}
+	if written[0].Outcome != audit.OutcomeFailed {
+		t.Errorf("Outcome 为 %q，期望 failed", written[0].Outcome)
+	}
+	if written[0].ResponseStatus != 422 {
+		t.Errorf("ResponseStatus 为 %d，期望 422", written[0].ResponseStatus)
 	}
 }
 

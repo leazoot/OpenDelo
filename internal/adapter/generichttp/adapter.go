@@ -90,6 +90,12 @@ func (a *Adapter) Service() string { return a.definition.Service }
 
 func (a *Adapter) Kind() registry.Kind { return registry.KindGenericHTTP }
 
+func (a *Adapter) BaseURL() string { return a.definition.BaseURL }
+
+// AuthScheme 来自用户给出的定义：Generic HTTP 的声明完全由用户提供
+// （REQ-ADAPTER-005），包括注入形式。
+func (a *Adapter) AuthScheme() registry.AuthScheme { return a.definition.AuthScheme }
+
 // Capabilities 返回用户定义的全部操作。
 func (a *Adapter) Capabilities() []registry.Capability {
 	return append([]registry.Capability(nil), a.declarations...)
@@ -149,14 +155,17 @@ func (a *Adapter) Execute(
 	}
 	if response.StatusCode >= 400 {
 		return registry.Failure(request.OperationID,
-			upstreamError(response.StatusCode, request.OperationID)), nil
+			upstreamError(response.StatusCode, request.OperationID)).
+			FromUpstream(response.StatusCode), nil
 	}
 
 	data, err := registry.Redact(response.Body, capability)
 	if err != nil {
-		return registry.Failure(request.OperationID, err), nil
+		return registry.Failure(request.OperationID, err).
+			FromUpstream(response.StatusCode), nil
 	}
-	return registry.Success(request.OperationID, data, nil), nil
+	return registry.Success(request.OperationID, data, nil).
+		FromUpstream(response.StatusCode), nil
 }
 
 // buildPath 用资源维度填出实际路径，逐段校验。

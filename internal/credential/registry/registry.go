@@ -161,6 +161,142 @@ func (r *Registry) Kinds() []ProviderKind {
 	return kinds
 }
 
+// Registration 是一次凭据登记的输入：去哪个来源、取哪一项、取哪个字段。
+//
+// 这里没有一个字段承载凭据明文，也不可能有 —— 明文只在 Fetch 的返回值里
+// 以 secret.Value 出现（REQ-CRED-001）。
+type Registration struct {
+	// ProviderID 与 ReferenceID 是新建时用的主键。复用已有记录时它们被丢弃，
+	// 由调用方生成而不是本包生成：生成失败意味着这次操作无法被审计追溯，
+	// 那个判断属于调用方
+	ProviderID  string
+	ReferenceID string
+
+	Kind ProviderKind
+	// ProviderLabel 区分同一种类下的多个来源（两个 1Password 账号）。
+	ProviderLabel string
+	ItemRef       string
+	Field         string
+	Service       string
+	AccountLabel  string
+}
+
+// RegisterReference 登记一份凭据引用（REQ-CRED-002 AC1）。
+//
+// 顺序是先探后写，两道探测都在事务之外完成（事务里不许调用 Provider）：
+//
+//  1. 来源在不在（Available）
+//  2. **这组坐标指不指得到东西**（resolves）
+//
+// 第二道不能省。各来源的 Available 探的都是「这个来源本身可用吗」——
+// 钥匙串跑 `security help`、1Password 跑 `op --version` —— 与用户填的条目无关。
+// 只探第一道的话，一组永远解析不出东西的坐标也能登记成功，界面上看着是连好的，
+// 直到某次审批放行、执行时才失败，而那时用户已经为它做过一次决定了。
+//
+// 坐标已经登记过时复用那一行，不再插一份 —— 同一份凭据可以支撑多个身份，
+// 断开之后也还能重连。复用时若入参与库里的服务不一致则返回冲突：
+// 照单全收等于把一份已登记的 GitHub 凭据改名成 Cloudflare 再拿去匹配。
+func (r *Registry) RegisterReference(
+	ctx context.Context, spec Registration,
+) (Reference, error) {
+	source, registered := r.sources[spec.Kind]
+	if !registered {
+		return Reference{}, unavailable("凭据来源 " + string(spec.Kind) + " 未登记")
+	}
+	if err := source.Available(ctx); err != nil {
+		return Reference{}, err
+	}
+	if err := resolves(ctx, source, spec); err != nil {
+		return Reference{}, err
+	}
+
+	now := r.clock.Now()
+	settled, err := r.references.CreateRegistration(ctx,
+		Provider{
+			ID:        spec.ProviderID,
+			Kind:      spec.Kind,
+			Label:     spec.ProviderLabel,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Reference{
+			ID:           spec.ReferenceID,
+			ItemRef:      spec.ItemRef,
+			Field:        spec.Field,
+			Service:      spec.Service,
+			AccountLabel: spec.AccountLabel,
+			// 元数据与能力声明本期没有录入入口，留空值而不是编一份出来。
+			Metadata:       "{}",
+			Capabilities:   "[]",
+			HealthStatus:   HealthOK,
+			LastVerifiedAt: now,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		})
+	if err != nil {
+		return Reference{}, err
+	}
+
+	// 只比服务名。账户名是描述性的，改它不影响这份凭据被匹配到哪里；
+	// 服务名不是 —— 把一份已登记的 GitHub 凭据改记成 Cloudflare，
+	// 等于让它去匹配另一个服务的请求。
+	if settled.Service != spec.Service {
+		return Reference{}, apperr.New(apperr.CodeConflict).WithDetail(
+			"这组坐标已登记给 " + settled.Service + "，不能改记给 " + spec.Service)
+	}
+
+	// 复用的那一行可能是断开时被标成不可用的。刚才已经探通，据此恢复；
+	// 新建的那一行本来就是 ok，SetReferenceHealth 写的是同一个值。
+	if settled.HealthStatus != HealthOK || settled.LastVerifiedAt.Before(now) {
+		return r.references.SetReferenceHealth(ctx, settled.ID, HealthOK, now, now)
+	}
+	return settled, nil
+}
+
+// resolves 校验一组坐标确实指得到一份非空的凭据。
+//
+// 明文在这里存在的时间就是这个函数的执行时间：取到即 defer Zero，
+// 不返回、不记录、不进错误信息 —— 返回的只有「解析得出来吗」这一个布尔含义。
+// 这是本包内唯一一处为了校验而取用凭据的地方，因此它不接受调用方传入的
+// Reference：能被校验的只有正要登记的那一组坐标。
+func resolves(ctx context.Context, source Source, spec Registration) error {
+	value, err := source.Fetch(ctx, Reference{
+		ItemRef: spec.ItemRef,
+		Field:   spec.Field,
+		Service: spec.Service,
+	})
+	if err != nil {
+		return asCoordinateFailure(err)
+	}
+	defer value.Zero()
+
+	// 空值不能当成有效凭据登记下去：执行时发出的会是一个不带认证的请求，
+	// 那既不会被这里拦住，也不会在外部服务那里得到一个说得清的错误。
+	if value.IsEmpty() {
+		return apperr.New(apperr.CodeCredentialNotAuthorized).
+			WithDetail("这组坐标指向的字段是空的")
+	}
+	return nil
+}
+
+// asCoordinateFailure 把校验期的取用失败归类到「这组坐标不对」。
+//
+// 各来源在取用失败时给的是 provider_unavailable —— 对**执行**来说那是对的：
+// 条目不存在、用户拒绝授权、钥匙串锁着，后果都是取不到凭据，请求都得拒。
+// 但在**登记**这一刻它们不是一回事：来源可用性刚刚才探过，此时再失败，
+// 最可能的原因是用户把条目名或账号填错了，而「钥匙串锁着」这句提示
+// 会让他去解锁一个本来就没锁的钥匙串。
+//
+// 两个确实说的是别的事的错误码原样放行：等待解锁超时与保险库锁着，
+// 它们各自有准确的下一步。归类只改说法，不改结论 —— 两条路都是拒绝。
+func asCoordinateFailure(err error) error {
+	if apperr.Is(err, apperr.CodeProviderLockedTimeout) || apperr.Is(err, apperr.CodeVaultLocked) {
+		return err
+	}
+	return apperr.Wrap(apperr.CodeCredentialNotAuthorized, err).
+		WithDetail("这组坐标取不到东西")
+}
+
 // Fetch 按引用取出凭据明文。
 //
 // 调用方必须 `defer value.Zero()`：本包不缓存明文，也不知道调用方什么时候用完

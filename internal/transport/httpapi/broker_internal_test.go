@@ -1,0 +1,108 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Runcoor/opendelo/internal/platform/clock"
+)
+
+/*
+ * 广播器必须存在（回归）。
+ *
+ * 8787 面原本这样构造端点：`&endpoints{services: ..., logger: ...}` —— 少填了
+ * events。少填不会有编译错误，而后果是**第一次审批决定就让整个进程 panic**：
+ * 决策端点走完之后要广播一条事件，那时 e.events 是 nil，`Broker.Publish`
+ * 在锁上解引用。用户看到的是网关直接消失，账本里也没有那次决定。
+ *
+ * 由 E2E 的 S5 / S6 / S9 三条用例先撞出来（那三条都要先批准一次），
+ * 这里把它收成一个不依赖真实进程的用例。
+ */
+
+func TestNewEndpoints_WithoutABroker_StillPublishesWithoutPanicking_Regression(t *testing.T) {
+	endpoints := newEndpoints(
+		Services{Clock: clock.NewFixed(time.Unix(0, 0).UTC())},
+		nil,
+		slog.New(slog.DiscardHandler))
+
+	if endpoints.events == nil {
+		t.Fatal("端点没有广播器 —— 一次审批决定就会让进程 panic")
+	}
+
+	// 真的广播一次。nil 广播器在这一行崩掉。
+	endpoints.publish(httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/approvals/x/allow-once", nil),
+		"passage", map[string]string{"id": "x"})
+}
+
+// TestNewEndpoints_WithABroker_UsesThatOne：给了广播器就用给的那个，
+// 否则 SSE 订阅者挂在一个没人往里写的广播器上。
+func TestNewEndpoints_WithABroker_UsesThatOne(t *testing.T) {
+	given := NewBroker(slog.New(slog.DiscardHandler))
+
+	endpoints := newEndpoints(Services{}, given, slog.New(slog.DiscardHandler))
+
+	if endpoints.events != given {
+		t.Error("端点没有使用传入的广播器")
+	}
+}
+
+/*
+ * 一条事件必须一次写完（回归）。
+ *
+ * `writeEvent` 原本分五次 `w.Write` 拼这一帧。`net/http` 的响应体后面是一个
+ * 2048 字节的 bufio：超过它的帧因此被切成多次 socket 写。Chromium 与 Firefox
+ * 会一直读到读空，**WebKit 每次「有数据了」只读一次、不重新轮询** —— 后半截
+ * 要等下一条事件才到得了 Console，而这条流不做重放。
+ *
+ * 实测（Playwright 1.62 的 WebKit，2026-08-05）：一条 2884 字节的到达事件
+ * 先到 2048 字节，剩下的 836 字节要等**下一条事件**才交付。用户看到的是
+ * 「缝前来了人，Safari 上什么也不出现」，而且在没有第二条事件的安静时段里
+ * 永远不出现。
+ *
+ * 守的是因不是果：果要一个真的 WebKit 才看得见（`test/e2e` 的兼容性用例），
+ * 而因在这里一句话就能钉住 —— 一帧一次写完。
+ */
+func TestWriteEvent_SendsTheWholeFrameInOneWrite(t *testing.T) {
+	body := httptest.NewRecorder()
+	recorder := &countingWriter{ResponseWriter: body}
+
+	// 撑到 2048 以上：短于 bufio 的帧就算分几次写也只产生一次 socket 写，
+	// 那样的用例会在缺陷仍然存在时通过。
+	long := make([]byte, 4096)
+	for index := range long {
+		long[index] = 'x'
+	}
+	payload, err := json.Marshal(map[string]string{"resource": string(long)})
+	if err != nil {
+		t.Fatalf("构造事件失败：%v", err)
+	}
+
+	if err = writeEvent(recorder, Event{Type: EventArrival, Data: payload, At: "2026-08-05T00:00:00Z"}); err != nil {
+		t.Fatalf("写出事件失败：%v", err)
+	}
+
+	if recorder.writes != 1 {
+		t.Errorf("一帧写了 %d 次，期望 1 次 —— 分开写的话 WebKit 上后半截要等下一条事件",
+			recorder.writes)
+	}
+	frame := body.Body.String()
+	if !strings.HasPrefix(frame, "event: "+EventArrival+"\ndata: ") || !strings.HasSuffix(frame, "\n\n") {
+		t.Errorf("帧的格式不对：%.40q…", frame)
+	}
+}
+
+// countingWriter 记下 Write 被叫了几次。
+type countingWriter struct {
+	http.ResponseWriter
+	writes int
+}
+
+func (c *countingWriter) Write(payload []byte) (int, error) {
+	c.writes++
+	return c.ResponseWriter.Write(payload)
+}

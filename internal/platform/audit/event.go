@@ -47,6 +47,9 @@ const (
 	EventStrongAuthLocked EventType = "security.strong_auth_locked"
 	// EventPruned 保留期清理删除了超期记录（REQ-AUDIT-005 AC1）。
 	EventPruned EventType = "audit.pruned"
+	// EventApprovalExpired 是一条等不到人的审批到了时限（REQ-CAP-003 AC3）。
+	// 它不是「用户拒绝」：结论一样是没有放行，但原因是没人来处理。
+	EventApprovalExpired EventType = "approval.expired"
 )
 
 // Verdict 与 RiskLevel 在这里各自定义，而不是引用 core 的同名类型：

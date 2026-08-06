@@ -240,20 +240,31 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  /* 两个孩子都要能收窄：默认的 min-width:auto 会让长资源名把整行撑出去。 */
+  flex-wrap: wrap;
   margin-top: 9px;
 }
 
+/*
+ * 这个槽位装的是用户的资源名与操作名，长度不由我们决定。
+ * 因此高度跟着内容走（min-height 而不是 height），四个方向都留出间距 ——
+ * 写死高度的后果是长一点的仓库名把文字顶到边框外面去。
+ */
 .leaseTab {
   display: flex;
   align-items: center;
   gap: 9px;
-  height: 28px;
-  padding: 0 11px 0 9px;
+  min-height: 28px;
+  padding: 5px 11px 5px 9px;
   border: 1px solid var(--lease-edge);
   border-left: 2px solid var(--lease);
   border-radius: 0 5px 5px 0;
   background: var(--lease-wash);
   font-size: 11.5px;
+}
+
+.leaseTab > span:first-child {
+  min-width: 0;
 }
 
 .leaseLeft {

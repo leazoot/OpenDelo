@@ -70,6 +70,15 @@ type previewHarness struct {
 func newPreviewHarness(t *testing.T, capabilities string, previews *recordingPreviews) previewHarness {
 	t.Helper()
 
+	return newPreviewHarnessWithArrivals(t, capabilities, previews, &recordingArrivals{})
+}
+
+// newPreviewHarnessWithArrivals 与 newPreviewHarness 相同，但让调用方拿到到达通知。
+func newPreviewHarnessWithArrivals(
+	t *testing.T, capabilities string, previews *recordingPreviews, arrivals *recordingArrivals,
+) previewHarness {
+	t.Helper()
+
 	gateway := fixtures.NewGateway(t)
 	if _, err := repo.NewServiceAdapters(gateway.DB).CreateDeclaration(t.Context(),
 		fixtures.Declaration(fixtures.WithDeclarationCapabilities(capabilities))); err != nil {
@@ -90,7 +99,8 @@ func newPreviewHarness(t *testing.T, capabilities string, previews *recordingPre
 		Identities: repo.NewIdentities(gateway.DB), Agents: repo.NewAgents(gateway.DB),
 		Devices: repo.NewDevices(gateway.DB), Declarations: repo.NewServiceAdapters(gateway.DB),
 		Registry: registry, Previews: previews, Requests: gateway.Requests,
-		Clock: gateway.Clock, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Arrivals: arrivals,
+		Clock:    gateway.Clock, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatalf("构造请求编排失败：%v", err)

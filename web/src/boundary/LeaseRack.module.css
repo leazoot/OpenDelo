@@ -62,8 +62,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 30px;
-  padding: 0 12px 0 10px;
+  /*
+   * 高度跟着内容走。这个标签装的是用户的资源名与操作名，长度不由我们决定 ——
+   * 写死高度的后果是长一点的仓库名把文字顶到边框外面去（与卷宗那个槽位同一条规矩）。
+   */
+  min-height: 30px;
+  padding: 5px 12px 5px 10px;
   border: 1px solid var(--lease-edge);
   border-left: 2px solid var(--lease);
   border-radius: 0 5px 5px 0;
@@ -93,6 +97,9 @@
 }
 
 .scope {
+  /* 长资源名换行而不是把标签撑出架子。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 11px;
   color: var(--text-3);
 }

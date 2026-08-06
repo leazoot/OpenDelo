@@ -25,6 +25,10 @@ type Adapter interface {
 	Kind() Kind
 	// Capabilities 是全部被声明的操作。未出现在这里的操作无法被调用。
 	Capabilities() []Capability
+	// BaseURL 是出站请求的根地址，声明落库时记下它。
+	BaseURL() string
+	// AuthScheme 是凭据注入的形式，不是凭据本身。
+	AuthScheme() AuthScheme
 }
 
 // Registry 是已注册的 Adapter 集合。

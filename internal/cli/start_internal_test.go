@@ -75,6 +75,49 @@ func TestGatewayRun_Cancelled_StopsAcceptingBeforeShuttingDown(t *testing.T) {
 	}
 }
 
+/*
+ * 有人开着 Console 时也要关得掉（回归）。
+ *
+ * SSE 是一条长连接：处理器在事件流上等着，一等就是几十分钟。而
+ * `http.Server.Shutdown` 只等处理器返回，不会去取消它们的 context ——
+ * 于是一条订阅着的 Console 会把优雅关闭拖满整个余量（5 秒），Run 带着
+ * `context deadline exceeded` 返回，进程以退出码 1 结束。
+ *
+ * 用户看到的是：开着界面的时候按 Ctrl-C，网关报错退出。
+ * 由 Firefox 上的兼容性用例先撞出来 —— 它比另外两个引擎更晚放开连接。
+ */
+func TestGatewayRun_WithAConsoleWatchingTheEventStream_StillShutsDownCleanly_Regression(t *testing.T) {
+	gateway := assembledForTest(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	served := make(chan error, 1)
+	go func() { served <- gateway.Run(ctx, discardLogger(), "test") }()
+
+	waitUntil(t, gateway.Availability.Serving, "网关没有进入服务状态")
+
+	// 直接订阅广播器：这与 Console 连上 `GET /v1/events` 之后处理器所处的状态
+	// 是同一个 —— 一条挂在事件流上、等着下一条事件的连接。
+	events, unsubscribe := gateway.events.Subscribe()
+	t.Cleanup(unsubscribe)
+
+	cancel()
+	if err := <-served; err != nil {
+		t.Fatalf("有人订阅着事件流时 Run 返回错误：%v", err)
+	}
+
+	// 关停必须把订阅一起结束掉，否则那条连接会一直挂着。
+	// 给个上限而不是直接收：没关掉的话这里会永远等下去，而一个挂住的用例
+	// 说不出是哪一条断言不成立。
+	select {
+	case _, open := <-events:
+		if open {
+			t.Error("关停之后订阅仍然是开的")
+		}
+	case <-time.After(time.Second):
+		t.Error("关停之后订阅没有被结束 —— 那条连接会把优雅关闭拖满整个余量")
+	}
+}
+
 func TestGatewayRun_AlreadyStopped_RefusesToServe(t *testing.T) {
 	// Availability 的停止是单向的（REQ-GATEWAY-003 AC3）。一个已经停掉的网关
 	// 再被 Run 一次必须失败，而不是监听着端口却对每个请求都回绝。

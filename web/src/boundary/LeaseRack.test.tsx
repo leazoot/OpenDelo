@@ -26,7 +26,9 @@ const lease = (id: string, leftMs: number) => ({
   agent_id: 'ag-1',
   identity_id: 'id-1',
   service: 'github',
-  resource_scope: { path: 'src/' },
+  // 真实形状：收敛出来的 Scope，资源是嵌套对象。原来这里是 `{path}` ——
+  // 服务端从来没有那样发过，而那个形状正好让标签看起来是对的。
+  resource_scope: { resource: { path: 'src/' }, operation: 'read_repository' },
   expires_at: new Date(Date.now() + leftMs).toISOString(),
   status: 'active',
   is_session_bound: false,
@@ -77,7 +79,7 @@ describe('Lease 架', () => {
     renderRack(() => json({ items: [active] }))
 
     expect(await screen.findByText('github')).toBeInTheDocument()
-    expect(screen.getByText('src/')).toBeInTheDocument()
+    expect(screen.getByText('src/ · read_repository')).toBeInTheDocument()
     expect(screen.getByText('41m')).toBeInTheDocument()
   })
 
@@ -205,5 +207,33 @@ describe('Lease 架', () => {
     await screen.findByText('41m')
 
     expect(client.getQueryState(LEASES_KEY)).not.toBeUndefined()
+  })
+})
+
+/*
+ * 装用户数据的槽位不能用固定高度（回归，与 TASK-0723 同一条规矩）。
+ *
+ * `.tab` 原本是 `height: 30px` 且上下内间距为 0 —— 按「一行短文本」设计的。
+ * 它装的却是**用户的资源名与操作名**，长度不由我们决定：一换行就顶破边框
+ * 并溢出到架子外面（2026-08-04 人工验收在真实仓库上撞出）。
+ */
+describe('Lease 架上的槽位', () => {
+  const css = readFileSync(resolve(process.cwd(), 'src/boundary/LeaseRack.module.css'), 'utf8')
+
+  it('标签的高度由内容决定，不是写死的', () => {
+    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    // 剥掉媒体查询再找：断点里的 `.tab` 只调 flex，不碰盒模型。
+    // 按 '@media' 切开是不行的 —— 基础规则可能排在断点块之后。
+    const base = withoutComments.replace(/@media[^{]*\{(?:[^{}]*\{[^}]*\})*[^{}]*\}/g, '')
+    const rule = /(^|\n)\.tab \{([^}]*)\}/.exec(base)?.[2] ?? ''
+    expect(rule, '.tab 一条规则都没有，用例是空跑的').not.toBe('')
+
+    expect(rule, 'height 写死之后，长一点的资源名会顶破这个标签').not.toMatch(
+      /(^|[;\s])height\s*:/,
+    )
+    expect(rule).toMatch(/min-height\s*:/)
+
+    const padding = /(^|[;\s])padding\s*:\s*([^;]+)/.exec(rule)?.[2]?.trim() ?? ''
+    expect(padding.split(/\s+/)[0], `上下内间距是 ${padding}`).not.toBe('0')
   })
 })

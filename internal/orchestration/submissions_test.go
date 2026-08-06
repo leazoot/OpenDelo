@@ -40,7 +40,8 @@ func TestNew_MissingAnyDependency_IsRefused(t *testing.T) {
 		Identities: repo.NewIdentities(database), Agents: repo.NewAgents(database),
 		Devices: repo.NewDevices(database), Declarations: repo.NewServiceAdapters(database),
 		Registry: registry, Previews: stillPreviews{},
-		Requests: repo.NewCapabilityRequests(database), Clock: clock.NewFixed(fixtures.Instant),
+		Requests: repo.NewCapabilityRequests(database), Arrivals: &recordingArrivals{},
+		Clock:  clock.NewFixed(fixtures.Instant),
 		Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	}
 	if _, err := orchestration.New(complete); err != nil {
@@ -58,6 +59,7 @@ func TestNew_MissingAnyDependency_IsRefused(t *testing.T) {
 		"Adapter 注册表":  func(s *orchestration.Submissions) { s.Registry = nil },
 		"查勘入口":         func(s *orchestration.Submissions) { s.Previews = nil },
 		"能力请求仓储":       func(s *orchestration.Submissions) { s.Requests = nil },
+		"到达通知":         func(s *orchestration.Submissions) { s.Arrivals = nil },
 		"时钟":           func(s *orchestration.Submissions) { s.Clock = nil },
 		"日志":           func(s *orchestration.Submissions) { s.Logger = nil },
 	}

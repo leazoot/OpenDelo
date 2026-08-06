@@ -131,9 +131,10 @@ func (e *endpoints) submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	record := decidedView(result)
+	withheld := withheldOperations(e.services.Capabilities, result.Request.Service, result.Request.Operation)
+	// arrival 事件由决策路径自己播（internal/orchestration 的到达通知）：
+	// 三个接入面共用那一条，在这里再播一次只会让缝上多出一行重复的。
 	// 事件流只到 Console，那一侧要看得见强认证；写给调用方的那一份不带它。
-	withheld := e.withheldOperations(result.Request.Service, result.Request.Operation)
-	e.publish(r, EventArrival, requestView(result.Request, record, withheld))
 	if caller.IsAgent() {
 		hideStrongAuth(record)
 	}
@@ -230,7 +231,7 @@ func (e *endpoints) show(w http.ResponseWriter, r *http.Request) {
 		hideStrongAuth(record)
 	}
 	writeJSON(w, r, e.logger, http.StatusOK, requestView(request, record,
-		e.withheldOperations(request.Service, request.Operation)))
+		withheldOperations(e.services.Capabilities, request.Service, request.Operation)))
 }
 
 // cancel 撤回一次仍在等待人工确认的请求（REQ-CAP-002）。
@@ -264,7 +265,7 @@ func (e *endpoints) cancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := requestView(cancelled, record,
-		e.withheldOperations(cancelled.Service, cancelled.Operation))
+		withheldOperations(e.services.Capabilities, cancelled.Service, cancelled.Operation))
 	e.publish(r, EventPassage, view)
 	writeJSON(w, r, e.logger, http.StatusOK, view)
 }

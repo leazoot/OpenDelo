@@ -20,7 +20,6 @@ const (
 	headerContentSecurityPolicy = "Content-Security-Policy"
 	headerContentTypeOptions    = "X-Content-Type-Options"
 	headerReferrerPolicy        = "Referrer-Policy"
-	headerOperationID           = "X-Operation-ID"
 )
 
 // withSecurityHeaders 给每个响应加上安全响应头。
@@ -40,24 +39,12 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 
 // withOperationID 给每个请求生成一个 operation_id，放进 context 供日志与错误响应取用。
 //
-// 上游已经给过就沿用：一次请求在整条链路上只能有一个 operation_id，
-// 换一个等于把「同一次请求」在账本里切成了两半。
+// 生成逻辑在 `platform/logging`，三个接入面共用一份（见那里的说明）；
+// 本函数只补上 8787 自己的那半：拒绝时按 REQ-API-003 的错误契约写出。
 func withOperationID(ids *ulid.Generator, logger *slog.Logger, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if existing := logging.OperationIDFrom(r.Context()); existing != "" {
-			w.Header().Set(headerOperationID, existing)
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		operationID, err := ids.NewID()
-		if err != nil {
-			// 拿不到 ID 意味着这次请求无法被审计追溯，按 Fail Closed 直接拒绝（ADR-004）。
-			logger.ErrorContext(r.Context(), "生成 operation_id 失败", slog.String("error", err.Error()))
-			writeError(w, r, logger, http.StatusInternalServerError, apperr.Wrap(apperr.CodeInternal, err))
-			return
-		}
-		w.Header().Set(headerOperationID, operationID)
-		next.ServeHTTP(w, r.WithContext(logging.WithOperationID(r.Context(), operationID)))
-	})
+	return logging.WithHTTPOperationID(ids, func(w http.ResponseWriter, r *http.Request, err error) {
+		// 拿不到 ID 意味着这次请求无法被审计追溯，按 Fail Closed 直接拒绝（ADR-004）。
+		logger.ErrorContext(r.Context(), "生成 operation_id 失败", slog.String("error", err.Error()))
+		writeError(w, r, logger, http.StatusInternalServerError, apperr.Wrap(apperr.CodeInternal, err))
+	}, next)
 }

@@ -88,6 +88,18 @@ type ProviderRepository interface {
 //
 // 没有 Delete：引用被 Identity 与审计引用着，删除会让追溯断链（外键为 RESTRICT）。
 type ReferenceRepository interface {
+	// CreateRegistration 在一个事务内登记来源与引用，两张表的写入不允许各写各的
+	//
+	// 来源按（种类，名字）、引用按（来源，条目，字段）查重，已存在则复用而不是
+	// 再插一行：同一份凭据可以支撑多个身份，断开之后也还能重连，而这两组坐标上
+	// 都有唯一索引。查重与插入必须在同一个事务里，否则两个并发的登记会同时查不到、
+	// 同时插入，其中一个撞上唯一索引失败。
+	//
+	// 复用时返回库里那一行，**不拿入参覆盖它** —— 覆盖等于让调用方改写一份
+	// 已经被身份和审计指着的记录。入参与库里不一致由调用方判断该不该继续。
+	CreateRegistration(
+		ctx context.Context, provider Provider, reference Reference,
+	) (Reference, error)
 	// CreateReference 登记一份引用。同一来源下的同一字段重复登记时返回错误。
 	CreateReference(ctx context.Context, reference Reference) (Reference, error)
 	// ReferenceByID 按主键读取。不存在时返回 apperr.CodeNotFound。

@@ -585,6 +585,47 @@ describe('Access Folio 的形态', () => {
   })
 })
 
+/*
+ * 装用户数据的槽位不能用固定高度（回归）。
+ *
+ * `.leaseTab` 原本是 `height: 28px` 且没有上下内间距 —— 按「一行短文本」设计的。
+ * 它装的却是**用户的资源名 + 操作名**，长度不由我们决定：`Dline-R/aiba-app`
+ * 加上 `create_issue` 就要换行，于是文字顶破边框、上下贴边
+ * （2026-08-04 人工验收在真实仓库上撞出）。
+ *
+ * 这一条守的是更一般的规矩：凡是渲染外部字符串的盒子，高度由内容决定。
+ */
+describe('卷宗里的槽位', () => {
+  const ruleOf = (selector: string) => {
+    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const found = [...withoutComments.matchAll(/([^{}]+)\{([^}]*)\}/g)].find(([, selectors]) =>
+      (selectors ?? '')
+        .split(',')
+        .map((one) => one.trim())
+        .includes(selector),
+    )
+    expect(found, `${selector} 一条规则都没有，用例是空跑的`).toBeDefined()
+    return found?.[2] ?? ''
+  }
+
+  it('Lease 预览的高度由内容决定，不是写死的', () => {
+    const declarations = ruleOf('.leaseTab')
+
+    expect(declarations, 'height 写死之后，长一点的仓库名会顶破这个框').not.toMatch(
+      /(^|[;\s])height\s*:/,
+    )
+    expect(declarations).toMatch(/min-height\s*:/)
+  })
+
+  it('Lease 预览换行之后文字不贴边', () => {
+    const padding = /(^|[;\s])padding\s*:\s*([^;]+)/.exec(ruleOf('.leaseTab'))?.[2]?.trim() ?? ''
+
+    // 四个方向都要有间距：原来是 `0 11px 0 9px`，换行的第二行因此贴着上下边框。
+    const [top] = padding.split(/\s+/)
+    expect(top, `上下内间距是 ${padding}`).not.toBe('0')
+  })
+})
+
 describe('高风险的强认证（REQ-APPROVAL-005，用户决定 D-14 方案 C）', () => {
   const highRisk = () => json({ ...request, decision: { ...request.decision, risk_level: 'high' } })
   const highRiskApprovals = () => json(approvals(['allow_once', 'allow_until_task_end', 'deny']))

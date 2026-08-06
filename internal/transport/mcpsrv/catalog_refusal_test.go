@@ -24,6 +24,8 @@ type fakeAdapter struct {
 func (f fakeAdapter) Service() string                     { return f.service }
 func (f fakeAdapter) Kind() registry.Kind                 { return registry.KindGenericHTTP }
 func (f fakeAdapter) Capabilities() []registry.Capability { return f.capabilities }
+func (f fakeAdapter) BaseURL() string                     { return "https://example.invalid" }
+func (f fakeAdapter) AuthScheme() registry.AuthScheme     { return registry.AuthBearer }
 
 // declare 造一条各项齐备的只读声明，只有操作名按用例变化。
 //
@@ -150,6 +152,48 @@ func TestNewCatalog_RotatingACredential_IsAllowed(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			if err := catalogOf(t, "svc", operation); err != nil {
 				t.Errorf("轮换类操作 %q 被拒绝了：%v", operation, err)
+			}
+		})
+	}
+}
+
+/*
+ * 合并到 core 之后的对账（R-46）。
+ *
+ * 本文件此前有一份自己的关键词表：`read_` 前缀 + 六个名词的**子串**匹配。
+ * 判定改问 `core/decision` 之后，两者在四个名字上不同，逐条记在这里 ——
+ * 「合并了两份实现」这句话不写用例就无从验证，而验证的对象恰恰是差异本身。
+ */
+func TestNewCatalog_AfterMergingIntoCore_TheHolesInTheOldRuleAreClosed(t *testing.T) {
+	// 旧表按**子串**匹配六个名词，于是这四个名字它一个都拦不住：
+	// 拆开写的 api_key / private_key 拼不出旧表里的 apikey，
+	// passphrase 与 keychain 则根本不在旧表里。四个都是取用现成的凭据。
+	//
+	// 用例只取以 `read_` 开头的名字：动词表（`core/intent`）是封闭的，
+	// list_ / export_ 这类名字在取到凭据判定之前就已经因为动词不合法被拒，
+	// 拿它们当例子的话，这条用例验的是动词表而不是凭据判定。
+	for _, operation := range []string{
+		"read_api_key", "read_private_key", "read_passphrase", "read_keychain_item",
+	} {
+		t.Run(operation, func(t *testing.T) {
+			if err := catalogOf(t, "svc", operation); err == nil {
+				t.Errorf("取用凭据的操作 %q 仍然生成了工具", operation)
+			}
+		})
+	}
+}
+
+func TestNewCatalog_AfterMergingIntoCore_SubstringCollisionsAreNoLongerRefused(t *testing.T) {
+	// 旧表用子串匹配，`tokenizer` 里凑出一个 `token` 就被判成读取凭据 ——
+	// 与 R-38 里 `manage_token` 拼成 `managetoken` 长出 `get` 是同一个坑。
+	// 分段匹配之后它们不再命中：`tokenizer` 不是 `token`。
+	//
+	// 这是本次合并**唯一放松**的一处，因此单列一条用例盯着它：放松的边界
+	// 必须是「名字里恰好含有那几个字母」，不能顺带把真正的取用也放出去。
+	for _, operation := range []string{"read_tokenizer", "read_tokenized_input"} {
+		t.Run(operation, func(t *testing.T) {
+			if err := catalogOf(t, "svc", operation); err != nil {
+				t.Errorf("操作 %q 只是名字里含有 token 几个字母，不该被拒绝：%v", operation, err)
 			}
 		})
 	}

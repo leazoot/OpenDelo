@@ -202,6 +202,16 @@ func (p *Pipeline) resolve(ctx context.Context, inputs Inputs) (resolved, decisi
 	if err != nil {
 		return out, decision.BlockerCapabilityNotOffered
 	}
+	// 记忆要在匹配身份**之前**取：它是身份匹配的第三级（REQ-IDENT-002）。
+	// 放到匹配之后就只剩「这个项目里有几个候选」这一个依据，于是同一服务下
+	// 连了第二个账号之后，学过的那条记忆再也没有机会说话 —— 每一次调用都变回歧义。
+	grants, blocker := p.learned(ctx,
+		inputs.Request.AgentID, inputs.Request.WorkspaceID, parsed.Service)
+	if blocker != "" {
+		return out, blocker
+	}
+	out.grants = grants
+
 	matched, err := matcher.Match(matcher.Request{
 		Service:     parsed.Service,
 		WorkspaceID: inputs.Request.WorkspaceID,
@@ -209,6 +219,7 @@ func (p *Pipeline) resolve(ctx context.Context, inputs Inputs) (resolved, decisi
 	}, matcher.Inputs{
 		WorkspaceBindings: inputs.WorkspaceBindings,
 		ResourceBindings:  inputs.ResourceBindings,
+		MemoryIdentityIDs: identitiesOf(grants),
 		Identities:        inputs.Identities,
 		ManualSelection:   inputs.ManualSelection,
 	})
@@ -228,11 +239,12 @@ func (p *Pipeline) resolve(ctx context.Context, inputs Inputs) (resolved, decisi
 	}
 	out.scope = converged
 
-	grants, blocker := p.learned(ctx, converged.Scope)
+	// 已签发的授权要在装配决策输入之前取好：`core` 不做 I/O（ADR-003），
+	// 它只比较范围。
+	standing, blocker := p.standing(ctx, inputs.Request.AgentID, parsed.Service)
 	if blocker != "" {
 		return out, blocker
 	}
-	out.grants = grants
 
 	assessment, err := risk.Evaluate(p.factors(inputs, parsed, converged.Scope, grants))
 	if err != nil {
@@ -249,6 +261,7 @@ func (p *Pipeline) resolve(ctx context.Context, inputs Inputs) (resolved, decisi
 		Scope:             converged,
 		Assessment:        assessment,
 		Learned:           toGrants(grants),
+		Active:            standing,
 		Blockers:          inputs.Blockers,
 		ReadOnlyAutoAllow: inputs.ReadOnlyAutoAllow,
 		NewService:        inputs.NewService,
@@ -260,15 +273,64 @@ func (p *Pipeline) resolve(ctx context.Context, inputs Inputs) (resolved, decisi
 }
 
 // learned 取出与本次请求相关、仍然可用的授权记忆。
+//
+// 只按 Agent、项目、服务三项取，不需要身份 —— 身份正是它要帮着定的那一项。
 func (p *Pipeline) learned(
-	ctx context.Context, converged scope.Scope,
+	ctx context.Context, agentID, workspaceID, service string,
 ) ([]trust.Memory, decision.Blocker) {
-	memories, err := p.memories.Match(ctx,
-		converged.AgentID, converged.WorkspaceID, converged.Service, memoryLimit)
+	memories, err := p.memories.Match(ctx, agentID, workspaceID, service, memoryLimit)
 	if err != nil {
 		return nil, decision.BlockerPolicyEngineFailure
 	}
 	return memories, ""
+}
+
+// standing 取出这个 Agent 在这个服务上仍然生效的已签发授权。
+//
+// 「允许到任务结束」签的正是这样一条：它不生成记忆，因此不在 learned 里。
+// 少了这一步，同一会话里下一次同样的调用会被再问一遍人（R-39）。
+//
+// **只把还活着的传给决策引擎**：已过期的在这里就滤掉 —— 决策引擎不做 I/O，
+// 判不了「现在几点」，而一条过期的授权在范围比较里与没过期的长得一模一样。
+// 读不懂范围的同样丢掉：罩不住任何东西的授权留着只会让排查变难。
+func (p *Pipeline) standing(
+	ctx context.Context, agentID, service string,
+) ([]decision.ActiveLease, decision.Blocker) {
+	active, err := p.leases.Active(ctx, leaseLimit)
+	if err != nil {
+		return nil, decision.BlockerPolicyEngineFailure
+	}
+
+	now := p.clock.Now()
+	covering := make([]decision.ActiveLease, 0, len(active))
+	for _, candidate := range active {
+		if candidate.AgentID != agentID || candidate.Service != service {
+			continue
+		}
+		if !candidate.ExpiresAt.After(now) {
+			continue
+		}
+		granted, scopeErr := lease.ScopeOf(candidate)
+		if scopeErr != nil {
+			continue
+		}
+		covering = append(covering, decision.ActiveLease{LeaseID: candidate.ID, Scope: granted})
+	}
+	return covering, ""
+}
+
+// leaseLimit 是一次匹配最多考虑多少条已签发授权。无界查询在仓储层就被拒。
+const leaseLimit = 100
+
+// identitiesOf 取出这些记忆各自认下的身份，供身份匹配的第三级使用。
+//
+// 不去重：`matcher.selectIdentities` 按候选身份取交集，重复的主键不会多出一个候选。
+func identitiesOf(memories []trust.Memory) []string {
+	pinned := make([]string, 0, len(memories))
+	for _, memory := range memories {
+		pinned = append(pinned, memory.IdentityID)
+	}
+	return pinned
 }
 
 // memoryLimit 是一次匹配最多取多少条记忆。无界查询在仓储层就被拒。
@@ -379,7 +441,7 @@ func (p *Pipeline) conclude(
 
 	default:
 		// 唯一的放行分支。审计已经在 issue 里先于签发写入。
-		issued, issueErr := p.issue(ctx, inputs, out, record)
+		issued, issueErr := p.issue(ctx, inputs, out, record, outcome)
 		if issueErr != nil {
 			return Result{}, issueErr
 		}
@@ -401,11 +463,22 @@ func (p *Pipeline) conclude(
 // issueLease 根本不会被调用。
 func (p *Pipeline) issue(
 	ctx context.Context, inputs Inputs, out resolved, record decision.Decision,
+	outcome decision.Outcome,
 ) (*lease.Lease, error) {
 	if err := p.write(
 		ctx, inputs, out, record, audit.EventAutoAllowed, audit.OutcomeSucceeded,
 	); err != nil {
 		return nil, err
+	}
+
+	// 据一条已签发的授权放行时**复用它，不另签一条**：为同一次请求签出第二条
+	// 授权，等于把一次人工确认换成了两份权限，而计次上限也随之翻倍（D-17）。
+	if outcome.MatchedLeaseID != "" {
+		reused, err := p.leases.ByID(ctx, outcome.MatchedLeaseID)
+		if err != nil {
+			return nil, err
+		}
+		return &reused, nil
 	}
 
 	return p.issueLease(ctx, lease.IssueRequest{

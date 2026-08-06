@@ -157,8 +157,8 @@ func requestView(
 // 从能力声明里减去这一个，而不是列一份写死的否定句：Adapter 增删操作时这段话
 // 会跟着变，而写死的那三句不会。声明表里认不出这个服务时返回空切片 ——
 // 那时一条也说不出来，编出来的否定句比不说更糟。
-func (e *endpoints) withheldOperations(service, granted string) []string {
-	declared := e.services.Capabilities.Operations(service)
+func withheldOperations(capabilities Capabilities, service, granted string) []string {
+	declared := capabilities.Operations(service)
 	withheld := make([]string, 0, len(declared))
 	for _, operation := range declared {
 		if operation != granted {

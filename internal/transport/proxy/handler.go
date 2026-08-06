@@ -30,14 +30,24 @@ import (
 const sessionHeader = "Proxy-Authorization"
 
 // NewHandler 把 Proxy 挂成一个 HTTP 处理器。
+//
+// operation_id 在最外层生成：这个面上的每一条日志、每一次审计写入与每一个
+// 错误响应都要带它，而链路里任何一处拿不到它都会让这次请求被判为不成立。
 func NewHandler(proxy *Proxy) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodConnect {
 			refuseTunnel(w, r, proxy)
 			return
 		}
 		proxy.serve(w, r)
 	})
+
+	return logging.WithHTTPOperationID(proxy.ids, func(w http.ResponseWriter, r *http.Request, err error) {
+		// 拿不到 ID 就没有可追溯的这一次，按 Fail Closed 拒绝（ADR-004）。
+		proxy.logger.ErrorContext(r.Context(), "生成 operation_id 失败",
+			slog.String("error", err.Error()))
+		writeError(w, apperr.Wrap(apperr.CodeInternal, err), "")
+	}, serve)
 }
 
 // refuseTunnel 拒绝 CONNECT。
@@ -51,7 +61,7 @@ func NewHandler(proxy *Proxy) http.Handler {
 // L1 Enforced 要挡的那条直连（PRD §21）。Agent 要访问受控服务，走 MCP 面。
 func refuseTunnel(w http.ResponseWriter, r *http.Request, proxy *Proxy) {
 	host, _, _ := strings.Cut(r.Host, ":")
-	proxy.logAccess(r, host, r.Host, Route{}, Grant{}, http.StatusForbidden, "tunnel_refused")
+	proxy.logAccess(r, host, r.Host, Route{}, Grant{}, http.StatusForbidden, 0, "tunnel_refused")
 	writeError(w, apperr.New(apperr.CodeForbidden).
 		WithDetail("8788 不建立隧道"), logging.OperationIDFrom(r.Context()))
 }
@@ -98,13 +108,33 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	started := p.clock.Now()
 	reply, err := p.exchange.Send(r.Context(), grant, route, body)
 	if err != nil {
 		p.refuse(w, r, target.Host, route, err, operationID)
 		return
 	}
 
-	p.logAccess(r, target.Host, target.Path, route, grant, reply.StatusCode, "forwarded")
+	// 出站已经发生，账本必须留下它 —— 8787 那条路（MCP）一直在记，8788 之前
+	// 只有一条访问日志，而日志按 `.claude/rules/backend.md` §8.6 不能替代审计，
+	// 于是经代理的每一次成功转发在账本上都是无痕的（R-47）。
+	//
+	// 记不进去就不把响应交给 Agent：出站已经收不回来了，但一次外部服务的答复
+	// 换来账本上的一个空洞，这笔交换不该由网关替用户做主（ADR-004 的同一条理由）。
+	if err := p.audits.RecordExecuted(r.Context(), Executed{
+		Caller: caller, Target: target, Route: route, Grant: grant,
+		UpstreamStatus: reply.UpstreamStatus,
+		Succeeded:      reply.StatusCode == http.StatusOK,
+		Duration:       p.clock.Now().Sub(started),
+	}); err != nil {
+		p.logAccess(r, target.Host, target.Path, route, grant,
+			http.StatusInternalServerError, reply.UpstreamStatus, "forwarded_unaudited")
+		writeError(w, err, operationID)
+		return
+	}
+
+	p.logAccess(r, target.Host, target.Path, route, grant,
+		reply.StatusCode, reply.UpstreamStatus, "forwarded")
 	writeReply(w, reply)
 }
 
@@ -117,7 +147,8 @@ func (p *Proxy) refuse(
 	host string, route Route, err error, operationID string,
 ) {
 	status := statusFor(err)
-	p.logAccess(r, host, pathOf(r), route, Grant{}, status, "refused")
+	// 拒绝发生在出站之前，因此上游状态码恒为 0。
+	p.logAccess(r, host, pathOf(r), route, Grant{}, status, 0, "refused")
 	p.audit(r, host, route, err)
 
 	if status == http.StatusProxyAuthRequired {

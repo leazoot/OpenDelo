@@ -71,6 +71,9 @@ type Options struct {
 	Authenticator Authenticator
 	Calls         Calls
 	Logger        *slog.Logger
+	// IDs 生成 operation_id。没有它这个面上的每一次调用都无法被审计追溯，
+	// 而审计是执行的前置条件（ADR-004），因此它与认证器一样是必填。
+	IDs logging.IDSource
 }
 
 // Server 分发 MCP 方法。
@@ -80,6 +83,7 @@ type Server struct {
 	authenticator Authenticator
 	calls         Calls
 	logger        *slog.Logger
+	ids           logging.IDSource
 }
 
 // NewServer 校验依赖并构造 Server。缺任何一项都拒绝构造：
@@ -96,6 +100,8 @@ func NewServer(options Options) (*Server, error) {
 		return nil, apperr.New(apperr.CodeInternal).WithDetail("MCP Server 缺少调用执行器")
 	case options.Logger == nil:
 		return nil, apperr.New(apperr.CodeInternal).WithDetail("MCP Server 缺少日志器")
+	case options.IDs == nil:
+		return nil, apperr.New(apperr.CodeInternal).WithDetail("MCP Server 缺少 operation_id 生成器")
 	}
 	return &Server{
 		availability:  options.Availability,
@@ -103,6 +109,7 @@ func NewServer(options Options) (*Server, error) {
 		authenticator: options.Authenticator,
 		calls:         options.Calls,
 		logger:        options.Logger,
+		ids:           options.IDs,
 	}, nil
 }
 

@@ -17,13 +17,27 @@ export class GatewayError extends Error {
   readonly status: number
   readonly code: string
   readonly operationId: string
+  /**
+   * 校验失败时出问题的字段名（REQ-CAP-001 AC1）。
+   *
+   * 只有 400 会带。表单据此把提示指到那一行 —— 错误正文本身是脱敏后的
+   * 通用句子，它说不出是哪一项填错了。
+   */
+  readonly fields: readonly string[]
 
-  constructor(status: number, code: string, message: string, operationId: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    operationId: string,
+    fields: readonly string[] = [],
+  ) {
     super(message)
     this.name = 'GatewayError'
     this.status = status
     this.code = code
     this.operationId = operationId
+    this.fields = fields
   }
 }
 
@@ -122,7 +136,13 @@ async function readJson(response: Response, path: string): Promise<unknown> {
 
 function toGatewayError(status: number, body: unknown): GatewayError {
   if (isErrorEnvelope(body)) {
-    return new GatewayError(status, body.error.code, body.error.message, body.error.operation_id)
+    return new GatewayError(
+      status,
+      body.error.code,
+      body.error.message,
+      body.error.operation_id,
+      fieldsOf(body),
+    )
   }
   return new GatewayError(status, 'internal', `Gateway 返回了 ${String(status)}，响应结构不符合错误契约。`, '')
 }
@@ -133,6 +153,21 @@ interface ErrorEnvelope {
     readonly message: string
     readonly operation_id: string
   }
+  readonly fields?: unknown
+}
+
+/**
+ * 取出错误体里的字段名。
+ *
+ * fields 与 error 平级而不是嵌在里面：apperr 的对外 message 只能取自码表，
+ * 往 error 对象里加键会让「错误体长什么样」出现第二种形状。
+ * 缺失或形状不对时当作没有，不让它把整个错误吞掉。
+ */
+function fieldsOf(body: ErrorEnvelope): readonly string[] {
+  if (!('fields' in body) || !Array.isArray(body.fields)) {
+    return []
+  }
+  return body.fields.filter((name): name is string => typeof name === 'string')
 }
 
 /** 用类型守卫而不是断言：断言只是让类型检查闭嘴，运行时的形状并没有被验证。 */

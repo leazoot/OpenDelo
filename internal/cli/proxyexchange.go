@@ -68,8 +68,9 @@ func (e *proxyExchange) Send(
 		return proxy.Reply{}, err
 	}
 	return proxy.Reply{
-		StatusCode:  reply.StatusCode,
-		ContentType: "application/json",
-		Body:        reply.Body,
+		StatusCode:     reply.StatusCode,
+		ContentType:    "application/json",
+		Body:           reply.Body,
+		UpstreamStatus: reply.UpstreamStatus,
 	}, nil
 }

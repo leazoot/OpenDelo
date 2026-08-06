@@ -2,14 +2,17 @@ package httpapi_test
 
 import (
 	"encoding/csv"
+	"maps"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/Runcoor/opendelo/internal/core/lease"
 	"github.com/Runcoor/opendelo/internal/core/matcher"
 	"github.com/Runcoor/opendelo/internal/core/trust"
+	credentials "github.com/Runcoor/opendelo/internal/credential/registry"
 	"github.com/Runcoor/opendelo/internal/transport/httpapi"
 	"github.com/Runcoor/opendelo/test/fixtures"
 	"github.com/Runcoor/opendelo/test/sentinel"
@@ -49,6 +52,31 @@ func TestListIdentities_ReturnsTheSeededIdentityWithoutAnyCredentialField(t *tes
 	}
 }
 
+// TestListIdentities_CarriesTheConnectableServices 守连接表单的下拉数据源。
+//
+// 没有它，界面只能让用户自己猜服务名，而猜错要等提交才知道。
+// 清单来自 Adapter 声明：没有 Adapter 的服务连上了也执行不了。
+func TestListIdentities_CarriesTheConnectableServices(t *testing.T) {
+	all := newAPI(t)
+
+	response := all.call(t, http.MethodGet, "/v1/identities", "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("状态码为 %d，正文为 %s", response.Code, response.Body.String())
+	}
+
+	var envelope struct {
+		ConnectableServices []string `json:"connectable_services"`
+	}
+	decodeInto(t, response, &envelope)
+
+	if !slices.Contains(envelope.ConnectableServices, fixtures.DefaultServiceLabel) {
+		t.Errorf("可连接的服务为 %v，不含 %q", envelope.ConnectableServices, fixtures.DefaultServiceLabel)
+	}
+	if !slices.IsSorted(envelope.ConnectableServices) {
+		t.Errorf("可连接的服务没有排序：%v —— 下拉的顺序会随注册顺序变", envelope.ConnectableServices)
+	}
+}
+
 func TestIdentityEndpoints_RefuseAgents(t *testing.T) {
 	// 身份、自动化、账本都是人的配置面，Agent 一律看不到（REQ-DECIDE-004 的边界）。
 	all := newAPIFor(t, httpapi.Caller{AgentID: fixtures.DefaultAgentID})
@@ -81,13 +109,43 @@ func TestIdentityEndpoints_RefuseAgents(t *testing.T) {
 
 // ——— POST /v1/identities/connect ———
 
-func TestConnect_TakesAReferenceNotAPlaintextCredential(t *testing.T) {
-	// 请求体里只有一个引用 id。明文从不经过 Web API（REQ-CRED-001）。
-	all := newAPI(t)
+// connectBody 拼一份合法的连接请求，用例只写自己关心的差异。
+//
+// 账户名默认用 bot 而不是 work：夹具里已经有一个 github/work 的身份，
+// 而 (service, account_label) 上有唯一索引。
+func connectBody(overrides map[string]string) string {
+	fields := map[string]string{
+		"provider_kind":     "1password",
+		"provider_label":    "个人保险库",
+		"provider_item_ref": "op://Personal/GitHub Bot",
+		"field":             "token",
+		"service":           fixtures.DefaultServiceLabel,
+		"account_label":     "bot",
+		"environment":       "production",
+	}
+	for name, value := range overrides {
+		fields[name] = value
+	}
 
-	body := `{"credential_reference_id":"` + fixtures.DefaultReferenceID + `",` +
-		`"account_label":"personal","environment":"non-production","is_default":false}`
-	response := all.call(t, http.MethodPost, "/v1/identities/connect", body)
+	pairs := make([]string, 0, len(fields))
+	for _, name := range slices.Sorted(maps.Keys(fields)) {
+		if fields[name] == "" {
+			continue
+		}
+		pairs = append(pairs, strconv.Quote(name)+":"+strconv.Quote(fields[name]))
+	}
+	return "{" + strings.Join(pairs, ",") + "}"
+}
+
+// TestConnect_RegistersTheReferenceFromCoordinates 是本端点的主路径：
+// 用户在 Identities 页面选定「哪个来源、哪个条目、哪个字段」，一次调用
+// 建出来源、引用与身份（REQ-CRED-002 AC1、REQ-IDENT-001）。
+//
+// 三个坐标全是元数据，凭它们无法离线还原出任何 Secret（REQ-CRED-001）。
+func TestConnect_RegistersTheReferenceFromCoordinates(t *testing.T) {
+	all := newAPIWith(t, fixtures.NewGatewayWithHealthySource(t), httpapi.Caller{})
+
+	response := all.call(t, http.MethodPost, "/v1/identities/connect", connectBody(nil))
 	if response.Code != http.StatusCreated {
 		t.Fatalf("状态码为 %d，正文为 %s", response.Code, response.Body.String())
 	}
@@ -97,60 +155,251 @@ func TestConnect_TakesAReferenceNotAPlaintextCredential(t *testing.T) {
 	if view.Status != string(matcher.StatusOK) {
 		t.Errorf("新身份状态为 %q，期望 ok", view.Status)
 	}
-
-	// 服务名由引用决定，不由请求体决定 —— 否则能造出
-	// 「引用指向 GitHub、身份自称 Cloudflare」的一条记录。
-	reference, err := all.backend.Services.Credentials.Reference(
-		t.Context(), fixtures.DefaultReferenceID)
-	if err != nil {
-		t.Fatalf("读取凭据引用失败：%v", err)
+	if view.CredentialReferenceID == "" {
+		t.Fatal("身份没有指向任何凭据引用")
 	}
+
+	// 引用确实落了库，而且坐标就是请求里给的那三项。
+	reference, err := all.backend.Services.Credentials.Reference(
+		t.Context(), view.CredentialReferenceID)
+	if err != nil {
+		t.Fatalf("读取新建的凭据引用失败：%v", err)
+	}
+	if reference.ItemRef != "op://Personal/GitHub Bot" {
+		t.Errorf("引用的条目坐标是 %q", reference.ItemRef)
+	}
+	if reference.Field != "token" {
+		t.Errorf("引用的字段是 %q", reference.Field)
+	}
+
+	// 服务名仍然由引用决定而不是由请求体直接落到身份上 —— 两处各存一份，
+	// 迟早会出现「引用指向 GitHub、身份自称 Cloudflare」的一条记录。
 	if view.Service != reference.Service {
 		t.Errorf("身份的服务是 %q，引用的是 %q", view.Service, reference.Service)
 	}
+
+	// 刚探测过才建的，健康状态不该是「从未验证过」。
+	if reference.HealthStatus != credentials.HealthOK {
+		t.Errorf("新引用的健康状态是 %q，期望 ok", reference.HealthStatus)
+	}
+	if reference.LastVerifiedAt.IsZero() {
+		t.Error("新引用没有记下验证时刻")
+	}
 }
 
-func TestConnect_RejectsAMissingOrUnknownReference(t *testing.T) {
+// TestConnect_DeclaresTheServiceItConnects_Regression 守的是 R-24：
+// `service_adapters` 表原本没有任何填充路径。
+//
+// 四个 Adapter 只活在内存里，而决策链路用的能力映射表来自数据库。
+// 全新安装后该表为空 —— MCP 每次调用都 `capability_not_offered`，
+// 方向是安全的，但产品在真实安装上不可用。
+//
+// 落点是连接流程而不是启动：启动时批量写入等于替用户「连接」了四个
+// 他没配过凭据的服务。
+func TestConnect_DeclaresTheServiceItConnects_Regression(t *testing.T) {
+	all := newAPIWith(t, fixtures.NewGatewayWithHealthySource(t), httpapi.Caller{})
+
+	before, err := all.backend.Declarations.EnabledDeclarations(t.Context(), 200)
+	if err != nil {
+		t.Fatalf("读取声明失败：%v", err)
+	}
+	if len(before) != 0 {
+		t.Fatalf("连接之前库里就有 %d 条声明", len(before))
+	}
+
+	response := all.call(t, http.MethodPost, "/v1/identities/connect", connectBody(nil))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("状态码为 %d，正文为 %s", response.Code, response.Body.String())
+	}
+
+	after, err := all.backend.Declarations.EnabledDeclarations(t.Context(), 200)
+	if err != nil {
+		t.Fatalf("读取声明失败：%v", err)
+	}
+	// 只写这一个。用户连的是 github，不该顺带把别的服务也「连接」上。
+	if len(after) != 1 {
+		t.Fatalf("落库了 %d 条声明，期望 1 条", len(after))
+	}
+	if after[0].Service != fixtures.DefaultServiceLabel {
+		t.Errorf("落库的是 %q 的声明，期望 %q", after[0].Service, fixtures.DefaultServiceLabel)
+	}
+	if after[0].BaseURL == "" || after[0].DefaultRiskLevel == "" {
+		t.Error("声明缺少出站地址或兜底风险等级 —— 那两项少一个这条声明就不能用")
+	}
+}
+
+// TestConnect_TwiceOnTheSameService_DeclaresItOnce 守复用：声明表在服务名上
+// 有唯一索引，第二次连接必须落到复用而不是撞库。
+func TestConnect_TwiceOnTheSameService_DeclaresItOnce(t *testing.T) {
+	all := newAPIWith(t, fixtures.NewGatewayWithHealthySource(t), httpapi.Caller{})
+
+	if first := all.call(t, http.MethodPost, "/v1/identities/connect",
+		connectBody(nil)); first.Code != http.StatusCreated {
+		t.Fatalf("第一次连接的状态码为 %d，正文为 %s", first.Code, first.Body.String())
+	}
+	second := all.call(t, http.MethodPost, "/v1/identities/connect",
+		connectBody(map[string]string{
+			"provider_item_ref": "op://Personal/GitHub Deploy",
+			"account_label":     "deploy",
+		}))
+	if second.Code != http.StatusCreated {
+		t.Fatalf("第二次连接的状态码为 %d，正文为 %s", second.Code, second.Body.String())
+	}
+
+	declarations, err := all.backend.Declarations.EnabledDeclarations(t.Context(), 200)
+	if err != nil {
+		t.Fatalf("读取声明失败：%v", err)
+	}
+	if len(declarations) != 1 {
+		t.Errorf("同一个服务落库了 %d 条声明", len(declarations))
+	}
+}
+
+// TestConnect_UnavailableProvider_WritesNothing_Regression 守 Fail Closed 的
+// 一条：来源探不通时不能留下任何一行。
+//
+// 留下一份来源或引用意味着界面上会出现一个看起来已经连好、实际取不到凭据的身份，
+// 那是执行期才会暴露的失败（`.claude/rules/backend.md` §7）。
+func TestConnect_UnavailableProvider_WritesNothing_Regression(t *testing.T) {
+	all := newAPIWith(t, fixtures.NewGatewayWithDownSource(t), httpapi.Caller{})
+
+	before := countIdentities(t, all)
+
+	response := all.call(t, http.MethodPost, "/v1/identities/connect", connectBody(nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("状态码为 %d，期望 503，正文为 %s", response.Code, response.Body.String())
+	}
+	if code := decodeErrorCode(t, response); code != "provider_unavailable" {
+		t.Errorf("错误码为 %q", code)
+	}
+
+	if after := countIdentities(t, all); after != before {
+		t.Errorf("身份数从 %d 变成了 %d —— 探不通的来源不该留下任何一行", before, after)
+	}
+
+	// 服务声明也不该留下。一份 enabled 的声明会让这个服务出现在工具清单里，
+	// 而用户那次连接是失败的 —— 那等于替他连接了一个他没配过凭据的服务。
+	declarations, err := all.backend.Declarations.EnabledDeclarations(t.Context(), 200)
+	if err != nil {
+		t.Fatalf("读取声明失败：%v", err)
+	}
+	if len(declarations) != 0 {
+		t.Errorf("连接失败却留下了 %d 条服务声明", len(declarations))
+	}
+}
+
+// TestConnect_WithNoSourceRegistered_IsRefused 是另一条 Fail Closed：
+// 来源根本没登记与来源登记了但探不通，后果一样 —— 取不到凭据。
+func TestConnect_WithNoSourceRegistered_IsRefused(t *testing.T) {
 	all := newAPI(t)
 
+	response := all.call(t, http.MethodPost, "/v1/identities/connect", connectBody(nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("状态码为 %d，期望 503，正文为 %s", response.Code, response.Body.String())
+	}
+}
+
+// TestConnect_RetryAfterAFailedIdentity_ReusesTheReference_Regression 守的是
+// 重试这条路。
+//
+// 引用与身份不在同一个事务里 —— 前者在 credential 包、后者在 core 侧的仓储 ——
+// 因此身份那一步失败会留下一份没人指向的引用。再连一次必须复用它，
+// 否则第一次失败之后，这组坐标就再也连不上了（坐标上有唯一索引）。
+func TestConnect_RetryAfterAFailedIdentity_ReusesTheReference_Regression(t *testing.T) {
+	all := newAPIWith(t, fixtures.NewGatewayWithHealthySource(t), httpapi.Caller{})
+
+	// 夹具里已经有一个 github/work 的身份，(service, account_label) 上有唯一索引，
+	// 因此这一次会在身份那一步失败，而引用已经写进去了。
+	failed := all.call(t, http.MethodPost, "/v1/identities/connect",
+		connectBody(map[string]string{"account_label": "work"}))
+	if failed.Code != http.StatusConflict {
+		t.Fatalf("状态码为 %d，期望 409，正文为 %s", failed.Code, failed.Body.String())
+	}
+
+	retried := all.call(t, http.MethodPost, "/v1/identities/connect", connectBody(nil))
+	if retried.Code != http.StatusCreated {
+		t.Fatalf("重试的状态码为 %d，正文为 %s", retried.Code, retried.Body.String())
+	}
+}
+
+// TestConnect_RejectsAnyFieldThatCouldCarryAPlaintextCredential 是一条哨兵：
+// 明文从不经过 Web API（REQ-CRED-001）。端点读不懂的字段一律 400，
+// 因此这些名字连被读到的机会都没有 —— 但这条性质必须有用例守着，
+// 它是「请求体里塞一个 token 就能绕过引用」与「塞不进去」的分界。
+func TestConnect_RejectsAnyFieldThatCouldCarryAPlaintextCredential(t *testing.T) {
+	all := newAPIWith(t, fixtures.NewGatewayWithHealthySource(t), httpapi.Caller{})
+
+	for _, name := range []string{
+		"token", "secret", "password", "api_key", "credential", "value", "plaintext",
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := connectBody(nil)
+			smuggled := body[:len(body)-1] + "," +
+				strconv.Quote(name) + ":" + strconv.Quote(sentinel.SentinelToken) + "}"
+
+			response := all.call(t, http.MethodPost, "/v1/identities/connect", smuggled)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("状态码为 %d，期望 400，正文为 %s", response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), sentinel.SentinelToken) {
+				t.Error("错误体把请求里的哨兵回显了出来")
+			}
+		})
+	}
+}
+
+func TestConnect_RejectsAnIncompleteOrUnknownCoordinate(t *testing.T) {
+	all := newAPIWith(t, fixtures.NewGatewayWithHealthySource(t), httpapi.Caller{})
+
 	cases := map[string]struct {
-		body     string
-		expected int
-		field    string
+		overrides map[string]string
+		expected  int
+		field     string
 	}{
-		"没给引用": {
-			body:     `{"account_label":"work","environment":"production"}`,
-			expected: http.StatusBadRequest,
-			field:    "credential_reference_id",
+		"没给来源种类": {
+			overrides: map[string]string{"provider_kind": ""},
+			expected:  http.StatusBadRequest,
+			field:     "provider_kind",
 		},
-		"引用不存在": {
-			body: `{"credential_reference_id":"01J000000000000000NOPE",` +
-				`"account_label":"work","environment":"production"}`,
-			expected: http.StatusNotFound,
+		"来源种类本期不实现": {
+			overrides: map[string]string{"provider_kind": "hashicorp-vault"},
+			expected:  http.StatusBadRequest,
+			field:     "provider_kind",
+		},
+		"没给条目坐标": {
+			overrides: map[string]string{"provider_item_ref": ""},
+			expected:  http.StatusBadRequest,
+			field:     "provider_item_ref",
+		},
+		"没给字段名": {
+			overrides: map[string]string{"field": ""},
+			expected:  http.StatusBadRequest,
+			field:     "field",
+		},
+		"服务没有对应的 Adapter": {
+			overrides: map[string]string{"service": "myspace"},
+			expected:  http.StatusBadRequest,
+			field:     "service",
 		},
 		"环境认不出": {
-			body: `{"credential_reference_id":"` + fixtures.DefaultReferenceID + `",` +
-				`"account_label":"work","environment":"staging"}`,
-			expected: http.StatusBadRequest,
-			field:    "environment",
+			overrides: map[string]string{"environment": "staging"},
+			expected:  http.StatusBadRequest,
+			field:     "environment",
 		},
 		"没给账户名": {
-			body: `{"credential_reference_id":"` + fixtures.DefaultReferenceID + `",` +
-				`"environment":"production"}`,
-			expected: http.StatusBadRequest,
-			field:    "account_label",
+			overrides: map[string]string{"account_label": ""},
+			expected:  http.StatusBadRequest,
+			field:     "account_label",
 		},
 	}
 
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			response := all.call(t, http.MethodPost, "/v1/identities/connect", testCase.body)
+			response := all.call(t, http.MethodPost,
+				"/v1/identities/connect", connectBody(testCase.overrides))
 			if response.Code != testCase.expected {
 				t.Fatalf("状态码为 %d，期望 %d，正文为 %s",
 					response.Code, testCase.expected, response.Body.String())
-			}
-			if testCase.field == "" {
-				return
 			}
 			// 400 必须来自入口的校验而不是数据库的 CHECK：后者也会是一个错误，
 			// 但它说不出是哪个字段不对。
@@ -159,6 +408,16 @@ func TestConnect_RejectsAMissingOrUnknownReference(t *testing.T) {
 			}
 		})
 	}
+}
+
+func countIdentities(t *testing.T, all api) int {
+	t.Helper()
+
+	identities, err := all.backend.Services.Pipeline.Identities(t.Context(), 200)
+	if err != nil {
+		t.Fatalf("读取身份列表失败：%v", err)
+	}
+	return len(identities)
 }
 
 // ——— POST /v1/identities/:id/verify ———

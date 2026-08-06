@@ -2,6 +2,7 @@ package registry_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -325,4 +326,30 @@ func TestRedactText_AdapterDeclaredRules_AreApplied(t *testing.T) {
 		sentinel.SentinelToken, []string{"webhook"})
 
 	assertNoSentinel(t, cleaned)
+}
+
+// TestFromUpstream_TheRealStatusNeverReachesTheAgent（R-44 的边界）
+//
+// 记下上游真正答的状态码是为了账本与服务端日志。它**不能**顺着结果流到 Agent：
+// 那串数字本身就是外部服务的内部信息（REQ-ADAPTER-007 AC2 的同一条理由，
+// 那里的做法是让 headers 在类型上不存在，而这里的字段必须存在，
+// 于是由 `json:"-"` 加这条用例来守）。
+func TestFromUpstream_TheRealStatusNeverReachesTheAgent(t *testing.T) {
+	result := registry.Failure(operationID, apperr.New(apperr.CodeNotFound)).
+		FromUpstream(http.StatusUnprocessableEntity)
+
+	if result.UpstreamStatus != http.StatusUnprocessableEntity {
+		t.Fatalf("上游状态码没有记下来：%d", result.UpstreamStatus)
+	}
+
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("序列化失败：%v", err)
+	}
+	if strings.Contains(string(encoded), "422") {
+		t.Errorf("给 Agent 的结果里出现了上游状态码：%s", encoded)
+	}
+	if strings.Contains(strings.ToLower(string(encoded)), "upstream") {
+		t.Errorf("给 Agent 的结果里出现了 upstream 字段：%s", encoded)
+	}
 }

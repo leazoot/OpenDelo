@@ -116,3 +116,61 @@ func TestMigrate00017_TheTwoNewTypes_AreAcceptedAfterUp(t *testing.T) {
 		t.Errorf("写进去的类型变成了 %q", actual)
 	}
 }
+
+/*
+ * 00021 · approval.expired。
+ *
+ * REQ-CAP-003 AC3 要求「等不到人」也留一条账。原先的封闭枚举里没有这个取值，
+ * 于是一条超时的审批只能被安静地关掉 —— 而账本上看不出它曾经在缝前等过。
+ */
+func TestMigrate00021_TheApprovalExpiredTypeIsAcceptedAndRollbackKeepsTheRow(t *testing.T) {
+	ctx := t.Context()
+	db := openForMigration(t)
+	if _, err := Migrate(ctx, db); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+
+	insertEventOfType(t, db, "01K1AUDIT000000000000000021", "approval.expired")
+	insertEventOfType(t, db, "01K1AUDIT000000000000000022", "decision.denied")
+
+	if err := rollback(ctx, db, 20); err != nil {
+		t.Fatalf("回滚到 20 失败：%v", err)
+	}
+
+	var remaining int
+	if err := db.Reader().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_events`).Scan(&remaining); err != nil {
+		t.Fatalf("统计审计记录失败：%v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("回滚后剩 %d 条审计记录，期望 2 条 —— 审计行不该因回滚而消失", remaining)
+	}
+	if actual := eventTypeOf(t, db, "01K1AUDIT000000000000000021"); actual != "error" {
+		t.Errorf("回滚后的类型是 %q，期望被改写为 error", actual)
+	}
+	if actual := eventTypeOf(t, db, "01K1AUDIT000000000000000022"); actual != "decision.denied" {
+		t.Errorf("对照组的类型被改成了 %q，回滚只该动新增的那一类", actual)
+	}
+}
+
+func TestMigrate00021_AfterRollback_TheNewTypeIsRefusedAgain(t *testing.T) {
+	ctx := t.Context()
+	db := openForMigration(t)
+	if _, err := Migrate(ctx, db); err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+	if err := rollback(ctx, db, 20); err != nil {
+		t.Fatalf("回滚到 20 失败：%v", err)
+	}
+
+	_, err := db.Writer().ExecContext(ctx, `
+		INSERT INTO audit_events (
+			id, operation_id, event_type, service, operation,
+			resource, resolved_scope, outcome, duration_ms, is_redacted,
+			metadata, created_at
+		) VALUES ('01K1AUDIT000000000000000023', 'op_x', 'approval.expired', 'github', 'create_issue',
+			'{}', '{}', 'blocked', 0, 1, '{}', '2026-08-04T00:00:00.000Z')`)
+	if err == nil {
+		t.Error("回滚之后仍然写得进 approval.expired —— CHECK 没有真的收紧")
+	}
+}

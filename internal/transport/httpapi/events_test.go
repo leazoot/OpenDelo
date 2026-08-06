@@ -26,8 +26,9 @@ func live(t *testing.T, caller httpapi.Caller) (string, backend, *httpapi.Broker
 	t.Helper()
 
 	gateway := newBackend(t)
-	broker := httpapi.NewBroker(discardLogger())
-	gateway.Services.Events = broker
+	// 用夹具已经装好的那一个，不另起一个：arrival 由决策路径上的到达通知播出，
+	// 它绑的就是这一个。换成新的之后订阅者挂在一条没人往里写的流上。
+	broker := gateway.Services.Events
 
 	all := newAPIForBackend(t, gateway, caller)
 	server := httptest.NewServer(all.handler)

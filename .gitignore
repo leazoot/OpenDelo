@@ -21,6 +21,11 @@
 /web/embedded/dist/
 /web/node_modules/
 
+# E2E 依赖与运行产物（截图、trace、报告）
+/test/e2e/node_modules/
+/test/e2e/test-results/
+/test/e2e/playwright-report/
+
 # Go 构建产物与本地工具链
 /bin/
 /.bin/

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 
 import { requestGateway, type GatewayRequestOptions } from './gateway'
@@ -98,4 +98,59 @@ export function markOf(name: string, fallback: string): string {
     .join('')
   const chosen = initials === '' ? fallback : initials
   return chosen.slice(0, 2).toUpperCase()
+}
+
+/*
+ * 确认一个 Agent 是你自己启动的（REQ-AGENT-002 AC3）。
+ *
+ * 未确认的 Agent 写操作永远不会被自动放行 —— 那道门与风险等级无关，学习也打不开它。
+ * 因此「今后在当前项目自动允许」要真的生效，先得有人在这里点一下头。
+ *
+ * 只往上升，不提供降级：PRD 没有要求撤回确认，而多一个能把 `known` 打回
+ * `unverified` 的入口，等于多一条能悄悄改变风险输入的路。
+ */
+
+/** TRUST_UNVERIFIED 是新注册 Agent 的等级（REQ-AGENT-002 AC1）。 */
+export const TRUST_UNVERIFIED = 'unverified'
+
+export async function confirmAgent(id: string, options: GatewayRequestOptions = {}): Promise<void> {
+  await requestGateway(`/v1/agents/${encodeURIComponent(id)}/trust`, {
+    ...options,
+    method: 'POST',
+    body: { confirmed: true },
+  })
+}
+
+export interface UseConfirmAgentOptions {
+  /** 覆盖请求实现，只在测试里用。 */
+  readonly confirm?: (id: string) => Promise<void>
+}
+
+export interface ConfirmAgentView {
+  confirm: (id: string) => void
+  /** 正在确认的那个 Agent；没有时为空串。重复提交由它拦住。 */
+  readonly pendingId: string
+  readonly isError: boolean
+}
+
+export function useConfirmAgent(options: UseConfirmAgentOptions = {}): ConfirmAgentView {
+  const client = useQueryClient()
+  const send = options.confirm ?? ((id: string) => confirmAgent(id))
+
+  const mutation = useMutation({
+    mutationFn: send,
+    // 不做乐观更新：信任等级是风险引擎的输入，先显示成已确认再回滚，
+    // 中间那一瞬间界面说的是一件还没成立的事。
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: AGENTS_KEY })
+    },
+  })
+
+  return {
+    confirm: (id: string) => {
+      mutation.mutate(id)
+    },
+    pendingId: mutation.isPending ? mutation.variables : '',
+    isError: mutation.isError,
+  }
 }

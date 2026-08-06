@@ -100,6 +100,14 @@ func (g *Gateway) Run(ctx context.Context, logger *slog.Logger, version string) 
 	serving, stopFaces := context.WithCancel(ctx)
 	defer stopFaces()
 
+	// 到期清扫与三个面同生共死：ctx 一结束它自己退出（REQ-CAP-003）。
+	// 不进 served：它没有「异常退出」这一说，停下来就是该停了。
+	swept := make(chan struct{})
+	go func() {
+		defer close(swept)
+		sweepApprovals(serving, g.expiry, logger)
+	}()
+
 	const faces = 3
 	served := make(chan error, faces)
 	go func() { served <- g.Web.Serve(serving) }()
@@ -120,10 +128,18 @@ func (g *Gateway) Run(ctx context.Context, logger *slog.Logger, version string) 
 
 	// 先停止受理，再等优雅关闭走完（REQ-GATEWAY-003 AC1）。
 	g.Availability.Stop()
+	// 事件流在优雅关闭**之前**结束：SSE 的处理器在广播器上等着，而
+	// `http.Server.Shutdown` 只等处理器返回、不会取消它们的 context。
+	// 不先收掉的话，一条开着的 Console 会把关闭拖满整个余量，
+	// 进程带着「context deadline exceeded」以退出码 1 结束。
+	g.events.Close()
 	stopFaces()
 	for range pending {
 		closing = append(closing, <-served)
 	}
+	// 等清扫也停下来：进程退出时留一个还在写数据库的 goroutine，
+	// 下一次启动会撞上一个没关干净的连接（`.claude/rules/backend.md` §11.5）。
+	<-swept
 	return errors.Join(closing...)
 }
 

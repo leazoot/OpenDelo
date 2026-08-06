@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Runcoor/opendelo/internal/core/agentauth"
 	"github.com/Runcoor/opendelo/internal/credential/localvault"
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
 	"github.com/Runcoor/opendelo/internal/platform/logging"
@@ -87,6 +88,23 @@ func (e *endpoints) trustAgent(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, r, e.logger, apperr.New(apperr.CodeInvalidRequest).
 			WithDetail("信任一个 Agent 必须显式确认"), "confirmed")
 		return
+	}
+
+	// 先看它在不在、是不是真的要升级 —— 认不出的 Agent 该得到 404，
+	// 而不是在写账本时撞上外键；重复确认不产生第二条账（它也不产生第二次副作用）。
+	current, err := e.services.Agents.AgentByID(r.Context(), id)
+	if err != nil {
+		e.fail(w, r, err)
+		return
+	}
+	// 先记账本再升级（ADR-004、REQ-AGENT-002 AC3）：从这一刻起这个 Agent 的写操作
+	// 有了被自动放行的可能，而一次不在账本上的信任提升，比一次没做成的糟得多。
+	if current.TrustLevel == agentauth.TrustUnverified {
+		if err = e.services.Pipeline.RecordAgentTrusted(
+			r.Context(), id, logging.OperationIDFrom(r.Context())); err != nil {
+			e.fail(w, r, err)
+			return
+		}
 	}
 
 	trusted, err := e.services.AgentAuth.ConfirmTrust(r.Context(), id)

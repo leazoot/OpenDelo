@@ -33,7 +33,9 @@ type fakeSource struct {
 	kind      registry.ProviderKind
 	available error
 	fetchErr  error
-	fetched   int
+	// fetchEmpty 让取用成功却返回空值，模拟「条目在、字段是空的」。
+	fetchEmpty bool
+	fetched    int
 }
 
 func (f *fakeSource) Kind() registry.ProviderKind { return f.kind }
@@ -44,6 +46,9 @@ func (f *fakeSource) Fetch(context.Context, registry.Reference) (secret.Value, e
 	f.fetched++
 	if f.fetchErr != nil {
 		return secret.Value{}, f.fetchErr
+	}
+	if f.fetchEmpty {
+		return secret.New(nil), nil
 	}
 	return secret.New([]byte(sentinel.SentinelToken)), nil
 }

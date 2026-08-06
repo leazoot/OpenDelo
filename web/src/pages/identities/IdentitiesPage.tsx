@@ -1,15 +1,16 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router'
 
 import { Seam } from '../../boundary/Seam'
 import { cx } from '../../components/cx'
-import { markOf, useAgents } from '../../data/agents'
+import { markOf, TRUST_UNVERIFIED, useAgents, useConfirmAgent } from '../../data/agents'
 import { useNow } from '../../data/clock'
 import { useIdentities } from '../../data/identities'
 import { useLeases } from '../../data/leases'
 import { useTrustMemories } from '../../data/trustMemories'
 import { useCopy } from '../../i18n/copy'
 
+import { ConnectForm } from './ConnectForm'
 import styles from './IdentitiesPage.module.css'
 import {
   agentCards,
@@ -35,15 +36,29 @@ export function IdentitiesPage() {
   const now = useNow()
 
   const { agents, isLoading: agentsLoading, isError: agentsFailed } = useAgents()
-  const { identities, isLoading: identitiesLoading, isError: identitiesFailed } = useIdentities()
+  const {
+    identities,
+    connectableServices,
+    isLoading: identitiesLoading,
+    isError: identitiesFailed,
+  } = useIdentities()
   const { leases } = useLeases()
   const { memories } = useTrustMemories()
 
   // 拿在手上的那个 Agent。拖放与键盘走同一条路：只有鼠标能做的操作
   // 等于这一页有一半功能对键盘不存在。
+  const {
+    confirm: confirmAgent,
+    pendingId,
+    isError: confirmFailed,
+  } = useConfirmAgent()
   const [held, setHeld] = useState<AgentCard | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [refused, setRefused] = useState('')
+  const [connecting, setConnecting] = useState(false)
+  // 收起表单时把焦点还给叫它出来的那个按钮，否则焦点掉回 <body>，
+  // 键盘用户要从顶栏一路 Tab 回来（与卷宗折回同一条规矩）。
+  const connectButton = useRef<HTMLButtonElement>(null)
 
   const input = { agents, identities, leases, memories, now, isHere: isSameHost(), copy }
   const left = agentCards(input)
@@ -70,14 +85,28 @@ export function IdentitiesPage() {
     <div className={styles.page}>
       <header className={styles.bar}>
         <div className={styles.hint}>{copy.identitiesKeyHint}</div>
-        {/*
-          连接身份要先有一条已登记的凭据引用，而登记它的入口本期只在 Gateway 侧。
-          画一个点了没反应的按钮比不画更糟（REQ-UI-007 AC2 的同一条原则）。
-        */}
-        <button type="button" className={styles.connect} disabled title={copy.identitiesConnectDisabled}>
+        <button
+          ref={connectButton}
+          type="button"
+          className={styles.connect}
+          aria-expanded={connecting}
+          onClick={() => {
+            setConnecting((open) => !open)
+          }}
+        >
           {copy.identitiesConnect}
         </button>
       </header>
+
+      {connecting && (
+        <ConnectForm
+          services={connectableServices}
+          onClose={() => {
+            setConnecting(false)
+            connectButton.current?.focus()
+          }}
+        />
+      )}
 
       <div className={styles.stage}>
         <Seam />
@@ -141,9 +170,30 @@ export function IdentitiesPage() {
                         </span>
                       </span>
                     </button>
+
+                    {agent.trustLevel === TRUST_UNVERIFIED && (
+                      <div className={styles.unverified}>
+                        <p className={styles.unverifiedWhy}>
+                          <span className={styles.unverifiedTag}>{copy.identitiesUnverified}</span>
+                          {copy.identitiesUnverifiedWhy}
+                        </p>
+                        <button
+                          type="button"
+                          className={styles.confirm}
+                          disabled={pendingId === agent.id}
+                          aria-label={copy.identitiesConfirmAria(agent.name)}
+                          onClick={() => {
+                            confirmAgent(agent.id)
+                          }}
+                        >
+                          {pendingId === agent.id ? copy.identitiesConfirming : copy.identitiesConfirm}
+                        </button>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
+              {confirmFailed && <p className={styles.refused}>{copy.identitiesConfirmFailed}</p>}
             </section>
 
             <section className={styles.column} aria-label={copy.identitiesInside}>
@@ -200,7 +250,7 @@ export function IdentitiesPage() {
       </div>
 
       <footer className={styles.foot} aria-live="polite">
-        {held !== null && <p className={styles.held}>{copy.identitiesPickedUp(held.name)}</p>}
+        {held !== null && <p className={styles.pickedUp}>{copy.identitiesPickedUp(held.name)}</p>}
         {refused !== '' && <p className={styles.refused}>{refused}</p>}
         {draft !== null && (
           <div className={styles.draft}>

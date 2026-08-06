@@ -18,6 +18,7 @@ var eventTypes = []EventType{
 	EventAdapterExecuted, EventError, EventIdentityMatched, EventRiskChanged,
 	EventScopeInjectionIgnored, EventSecretRequestBlocked, EventStrongAuthLocked,
 	EventTrustCleared, EventPruned, EventIdentityMismatch, EventAgentTrusted,
+	EventApprovalExpired,
 }
 
 // EventTypes 返回全部事件类型的副本，供测试与前端定义逐条核对。

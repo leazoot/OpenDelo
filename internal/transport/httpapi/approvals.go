@@ -145,7 +145,7 @@ func (e *endpoints) settle(action approval.Action) http.HandlerFunc {
 func (e *endpoints) settlementView(result pipeline.SettleResult) settlementEnvelope {
 	record := decisionView(result.Decision)
 	request := requestView(result.Request, &record,
-		e.withheldOperations(result.Request.Service, result.Request.Operation))
+		withheldOperations(e.services.Capabilities, result.Request.Service, result.Request.Operation))
 
 	envelope := settlementEnvelope{
 		Approval: approvalView(result.Approval,
@@ -182,7 +182,7 @@ func (e *endpoints) expand(
 
 	view := decisionView(record)
 	requested := requestView(request, &view,
-		e.withheldOperations(request.Service, request.Operation))
+		withheldOperations(e.services.Capabilities, request.Service, request.Operation))
 	return approvalView(item, availableActions(record), &requested, &view), nil
 }
 

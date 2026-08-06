@@ -70,6 +70,19 @@ type deviceRecords interface {
 	DeviceByID(ctx context.Context, id string) (agentauth.Device, error)
 }
 
+// arrivals 把一次刚做完的决策通知给已经打开的 Console（REQ-API-002 的 arrival 事件）。
+//
+// 定义成端口而不是直接持有事件流：那条流属于 Web API 那一面，而这里是
+// 三个面共用的决策路径。落在这里是因为「缝前什么时候看得见」不该取决于请求
+// 从哪个面进来 —— 原先只有 Web API 自己广播，Agent 走 MCP 或 Proxy 时缝前是静的，
+// 而 Gate 的列表明确不轮询，于是那些请求在刷新页面之前根本不出现。
+//
+// 没有返回值：广播不出去的后果是界面晚一点刷新，不能拿一次真实的授权
+// 去换一次界面更新。
+type arrivals interface {
+	Announce(ctx context.Context, result pipeline.Result)
+}
+
 // Submissions 把一条已落库的能力请求推进决策链路。
 type Submissions struct {
 	Pipeline     *pipeline.Pipeline
@@ -81,6 +94,8 @@ type Submissions struct {
 	// Previews 与 Requests 服务执行前的查勘：查出来的旧值落在请求那一行上。
 	Previews changePreviews
 	Requests pipeline.CapabilityRequestRepository
+	// Arrivals 把结论通知给已打开的 Console。
+	Arrivals arrivals
 	Clock    clock.Clock
 	// Logger 记查勘失败。查勘不是决策的一部分，失败只写日志 ——
 	// 但**不能什么都不写**：那样一次每回都失败的查勘会安静地表现成
@@ -102,6 +117,7 @@ func New(built Submissions) (*Submissions, error) {
 		"Adapter 注册表":  built.Registry == nil,
 		"查勘入口":         built.Previews == nil,
 		"能力请求仓储":       built.Requests == nil,
+		"到达通知":         built.Arrivals == nil,
 		"时钟":           built.Clock == nil,
 		"日志":           built.Logger == nil,
 	}
@@ -130,6 +146,9 @@ func (s *Submissions) Decide(
 		return pipeline.Result{}, err
 	}
 	s.previewChange(ctx, result)
+	// 查勘之后才通知：卷宗上的旧值是这一步查出来的，先播出去等于让
+	// 界面先收到一份没有旧值的。
+	s.Arrivals.Announce(ctx, result)
 	return result, nil
 }
 

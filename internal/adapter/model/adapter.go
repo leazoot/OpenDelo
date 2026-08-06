@@ -112,6 +112,8 @@ func (a *Adapter) Service() string { return string(a.provider) }
 
 func (a *Adapter) Kind() registry.Kind { return registry.KindModel }
 
+func (a *Adapter) BaseURL() string { return a.client.BaseURL() }
+
 // Capabilities 返回两项声明。
 func (a *Adapter) Capabilities() []registry.Capability {
 	return append([]registry.Capability(nil), a.declarations...)
@@ -212,7 +214,7 @@ func (a *Adapter) Execute(
 	outbound := registry.Request{
 		Capability:  capability,
 		Path:        capability.Path,
-		AuthScheme:  a.authScheme(),
+		AuthScheme:  a.AuthScheme(),
 		AuthHeader:  a.authHeader(),
 		Credential:  request.Credential,
 		OperationID: request.OperationID,
@@ -231,7 +233,8 @@ func (a *Adapter) Execute(
 	if response.StatusCode >= 400 {
 		return ExecuteResult{
 			Result: registry.Failure(request.OperationID,
-				upstreamError(response.StatusCode, request.OperationID)),
+				upstreamError(response.StatusCode, request.OperationID)).
+				FromUpstream(response.StatusCode),
 			Usage: estimate,
 		}, nil
 	}
@@ -239,14 +242,16 @@ func (a *Adapter) Execute(
 	data, err := registry.Redact(response.Body, capability)
 	if err != nil {
 		return ExecuteResult{
-			Result: registry.Failure(request.OperationID, err),
-			Usage:  estimate,
+			Result: registry.Failure(request.OperationID, err).
+				FromUpstream(response.StatusCode),
+			Usage: estimate,
 		}, nil
 	}
 
 	return ExecuteResult{
-		Result: registry.Success(request.OperationID, data, nil),
-		Usage:  actualUsage(response.Body, request.Input, estimate),
+		Result: registry.Success(request.OperationID, data, nil).
+			FromUpstream(response.StatusCode),
+		Usage: actualUsage(response.Body, request.Input, estimate),
 	}, nil
 }
 
@@ -262,8 +267,9 @@ func (a *Adapter) capability(request ExecuteRequest) (registry.Capability, error
 	return capability, nil
 }
 
-// authScheme 是两家的注入方式：OpenAI 用 Bearer，Anthropic 用自定义头。
-func (a *Adapter) authScheme() registry.AuthScheme {
+// AuthScheme 是两家的注入方式：OpenAI 用 Bearer，Anthropic 用自定义头。
+// 声明里记的是这个形式，不是凭据本身。
+func (a *Adapter) AuthScheme() registry.AuthScheme {
 	if a.provider == ProviderAnthropic {
 		return registry.AuthHeader
 	}

@@ -123,6 +123,60 @@
   border-color: var(--line-2);
 }
 
+/*
+ * 未确认的 Agent（REQ-AGENT-002）。
+ *
+ * 挂在卡片**外面**：卡片本身是个按钮，按钮里不能再套按钮。
+ * 不用红色 —— 未确认不是错误，是一个还没做的动作（REQ-UI-012）。
+ */
+.unverified {
+  margin: 7px 0 0 43px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.unverifiedWhy {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-3);
+}
+
+.unverifiedTag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--wait-edge);
+  border-radius: 99px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--wait);
+}
+
+.confirm {
+  flex: 0 0 auto;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--plane);
+  padding: 5px 11px;
+  font-size: 11px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.confirm:hover:not(:disabled) {
+  border-color: var(--line-3);
+  background: var(--raised);
+}
+
+.confirm:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
 /* 拿在手上的那张卡；放得下它的目标同时亮起来。 */
 .held {
   border-color: var(--line-3);
@@ -329,8 +383,14 @@
   display: none;
 }
 
+/*
+ * 底部那两句话。
+ *
+ * 名字不能叫 .held：CSS Module 按类名作用域，而 .held 已经是「拿在手上的那张卡」
+ * 的选中态。同名之后这里的 padding 会盖掉卡片自己的，选中的一瞬间卡片跳一下。
+ */
 .refused,
-.held {
+.pickedUp {
   padding: 12px 0;
   font-size: 11.5px;
   color: var(--text-2);
@@ -392,3 +452,64 @@
  * 1024：两列改为上下两层（验收标准）。缝在这一层里仍然居中 ——
  * 它是空间常量，窄屏不是让它挪走的理由。
  */
+/* 连接身份的表单。收的是坐标，因此这里一个 password 类型的输入框都没有。 */
+.connectForm {
+  margin: 0 24px 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--raised);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.connectBlurb {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 18px;
+}
+.connectGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.connectField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.connectLabel {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+.connectInput {
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: var(--desk);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+.connectInput:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.connectHint {
+  font-size: 10.5px;
+  color: var(--text-3);
+  line-height: 14px;
+}
+.connectNote {
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 16px;
+}
+.connectFailure {
+  font-size: 11.5px;
+  color: var(--block);
+  line-height: 17px;
+}

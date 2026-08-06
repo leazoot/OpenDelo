@@ -3,11 +3,13 @@ package mcpsrv
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
+	"github.com/Runcoor/opendelo/internal/platform/logging"
 )
 
 /*
@@ -32,8 +34,17 @@ const maxBody = 1 << 20
 // NewHTTPHandler 把 Server 挂成一个 HTTP 处理器。
 //
 // 只处理一个路径，路由由调用方决定。
+//
+// operation_id 在最外层生成：这个面上的每一次工具调用都要走完决策链路，
+// 而链路把「没有 operation_id」判为输入不成立 —— 少了这一层，
+// 每一次调用都会以 invalid_request 结束，账本上也不会有任何记录。
 func NewHTTPHandler(server *Server) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return logging.WithHTTPOperationID(server.ids, func(w http.ResponseWriter, r *http.Request, err error) {
+		// 拿不到 ID 就没有可追溯的这一次，按 Fail Closed 拒绝（ADR-004）。
+		server.logger.ErrorContext(r.Context(), "生成 operation_id 失败",
+			slog.String("error", err.Error()))
+		writeRPC(w, r, newError(nil, codeInternalError, "the gateway could not start this request"))
+	}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if refused := refuseBrowser(w, r); refused {
 			return
 		}
@@ -52,7 +63,7 @@ func NewHTTPHandler(server *Server) http.Handler {
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
-	})
+	}))
 }
 
 // refuseBrowser 拒绝一切带 Origin 的请求，返回是否已经写出响应。

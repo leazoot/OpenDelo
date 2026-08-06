@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/Runcoor/opendelo/internal/adapter/registry"
+	"github.com/Runcoor/opendelo/internal/core/decision"
+	"github.com/Runcoor/opendelo/internal/core/intent"
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
 )
 
@@ -26,30 +28,6 @@ import (
 //
 // 因此这里是一张封闭的表，匹配的是 <verb>_ 这个整体：操作名不以其中任何一个
 // 开头，注册就失败。新增动词是一次显式的改动，而不是一个悄悄生效的推断。
-var verbs = []string{
-	"bulk_update",
-	"create",
-	"delete",
-	"manage",
-	"merge",
-	"purge",
-	"read",
-	"update",
-}
-
-// credentialResources 是凭据类资源名里会出现的词。
-var credentialResources = []string{"credential", "secret", "token", "vault", "password", "apikey"}
-
-// readingVerbs 是「把现成的东西取出来」的动词。
-//
-// 凭据类工具的判定按**动词**而不是按名词：读出来的是现成的凭据，
-// 造出来的不是。只按名词匹配会把 PRD 明确允许（经审批）的创建与轮换类操作
-// 一起永久关掉 —— cloudflare 的 manage_token 与 github 的 update_secret
-// 都是轮换，它们的返回值由 Adapter 的 Redact() 负责（REQ-ADAPTER-007）。
-//
-// 这与 REQ-CAP-001 AC2 在 httpapi 侧的拦截是同一条规则的两个落点。
-var readingVerbs = []string{"read"}
-
 // Tool 是一条对外可见的工具定义。
 type Tool struct {
 	Name        string          `json:"name"`
@@ -142,13 +120,18 @@ func newTool(service string, capability registry.Capability) (Tool, error) {
 		return Tool{}, err
 	}
 
-	name, err := toolName(service, capability.Operation)
+	// 工具名的规则在 core/intent 一处（REQ-MCP-001）：Agent 看得见的名字
+	// 与落库声明里的名字必须是同一个字符串。
+	name, err := intent.ToolName(service, capability.Operation)
 	if err != nil {
 		return Tool{}, err
 	}
-	if word := credentialReadIn(capability.Operation); word != "" {
+	// 索取凭据的能力不得出现在工具清单里。判定问 core/decision，与决策链路
+	// 用的是同一份实现 —— 这里自己留一份关键词表的话，两份会各自漂移，
+	// 而其中一份漏掉的名字就成了一条只在这个面上存在的路（R-46）。
+	if category, forbidden := decision.Classify(service, capability.Operation); forbidden {
 		return Tool{}, declarationError("能力 " + service + "/" + capability.Operation +
-			" 是读取 " + word + "，索取凭据的能力不得出现在工具清单里")
+			" 落在禁止列表的 " + string(category) + " 一类，不得出现在工具清单里")
 	}
 
 	var schema json.RawMessage
@@ -158,25 +141,6 @@ func newTool(service string, capability registry.Capability) (Tool, error) {
 	}
 
 	return Tool{Name: name, Description: describe(capability), InputSchema: schema}, nil
-}
-
-// toolName 把 <service> 与 <verb>_<resource> 拼成 <service>.<resource>.<action>。
-func toolName(service, operation string) (string, error) {
-	for _, verb := range verbs {
-		if operation == verb {
-			return "", declarationError("操作名 " + operation + " 只有动词没有资源")
-		}
-		if !strings.HasPrefix(operation, verb+"_") {
-			continue
-		}
-		resource := strings.TrimPrefix(operation, verb+"_")
-		if resource == "" {
-			return "", declarationError("操作名 " + operation + " 只有动词没有资源")
-		}
-		return service + "." + resource + "." + verb, nil
-	}
-	return "", declarationError("操作名 " + operation +
-		" 不以任何一个已知动词开头，无法生成符合 REQ-MCP-001 的工具名")
 }
 
 // describe 生成工具描述。
@@ -201,31 +165,6 @@ func describe(capability registry.Capability) string {
 
 // normalize 复现客户端交给模型之前做的改写：点换成下划线。
 func normalize(name string) string { return strings.ReplaceAll(name, ".", "_") }
-
-// credentialReadIn 报告一个操作是不是「读取凭据」，是则返回命中的资源词。
-//
-// 两个条件必须同时成立：动词是取用类，资源是凭据类。
-// 只满足其一的（update_secret 是轮换，read_repository 读的不是凭据）不在此列。
-func credentialReadIn(operation string) string {
-	lowered := strings.ToLower(operation)
-	reading := false
-	for _, verb := range readingVerbs {
-		if strings.HasPrefix(lowered, verb+"_") {
-			reading = true
-			break
-		}
-	}
-	if !reading {
-		return ""
-	}
-
-	for _, word := range credentialResources {
-		if strings.Contains(lowered, word) {
-			return word
-		}
-	}
-	return ""
-}
 
 func declarationError(detail string) error {
 	return apperr.New(apperr.CodeInvalidConfiguration).WithDetail(detail)

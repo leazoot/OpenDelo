@@ -21,7 +21,9 @@ import (
 	"github.com/Runcoor/opendelo/internal/core/pipeline"
 	"github.com/Runcoor/opendelo/internal/core/scope"
 	"github.com/Runcoor/opendelo/internal/core/trust"
+	"github.com/Runcoor/opendelo/internal/credential/keychain"
 	"github.com/Runcoor/opendelo/internal/credential/localvault"
+	"github.com/Runcoor/opendelo/internal/credential/onepassword"
 	credentials "github.com/Runcoor/opendelo/internal/credential/registry"
 	"github.com/Runcoor/opendelo/internal/orchestration"
 	"github.com/Runcoor/opendelo/internal/platform/audit"
@@ -70,6 +72,9 @@ type Gateway struct {
 
 	db     *store.DB
 	events *httpapi.Broker
+	// expiry 关闭等不到人的审批（REQ-CAP-003）。只暴露这一个能力，
+	// 拿到整条链路意味着这里也能放行。
+	expiry approvalExpiry
 }
 
 // AssembleParams 是装配一台网关所需的外部输入。
@@ -124,18 +129,42 @@ func assembleOn(ctx context.Context, database *store.DB, params AssembleParams) 
 	if err != nil {
 		return nil, err
 	}
-	decide, err := orchestration.New(orchestration.Submissions{
-		Pipeline: services.Pipeline, Identities: repo.NewIdentities(database),
-		Agents: repo.NewAgents(database), Devices: repo.NewDevices(database),
-		Declarations: repo.NewServiceAdapters(database), Registry: registry,
-		Previews: exchange, Requests: repo.NewCapabilityRequests(database),
+	services.Capabilities = registry
+
+	// 到达通知要在编排之前装好：缝前来了人，三个面都要让开着的 Console 看见，
+	// 而它们共用的只有决策路径那一条。
+	announcer, err := httpapi.NewAnnouncer(httpapi.Announcement{
+		Events: services.Events, Capabilities: registry,
 		Clock: params.Clock, Logger: params.Logger,
 	})
 	if err != nil {
 		return nil, err
 	}
+
+	decide, err := orchestration.New(orchestration.Submissions{
+		Pipeline: services.Pipeline, Identities: repo.NewIdentities(database),
+		Agents: repo.NewAgents(database), Devices: repo.NewDevices(database),
+		Declarations: repo.NewServiceAdapters(database), Registry: registry,
+		Previews: exchange, Requests: repo.NewCapabilityRequests(database),
+		Arrivals: announcer,
+		Clock:    params.Clock, Logger: params.Logger,
+	})
+	if err != nil {
+		return nil, err
+	}
 	services.Submissions = decide
-	services.Capabilities = registry
+
+	// 连接服务的桥（R-24）：Adapter 在编译期注册，决策链路读的是库里的声明。
+	declarer, err := orchestration.NewDeclarer(orchestration.DeclarerOptions{
+		Registry:     registry,
+		Declarations: repo.NewServiceAdapters(database),
+		Clock:        params.Clock,
+		IDs:          ids,
+	})
+	if err != nil {
+		return nil, err
+	}
+	services.Declarer = declarer
 
 	web, err := httpapi.New(httpapi.Options{
 		Config:       params.Config,
@@ -166,6 +195,7 @@ func assembleOn(ctx context.Context, database *store.DB, params AssembleParams) 
 		MCP:          faces.mcp,
 		db:           database,
 		events:       services.Events,
+		expiry:       services.Pipeline,
 	}, nil
 }
 
@@ -241,7 +271,9 @@ func assembleAgentProxy(shared assembleFaceParams) (*faceServer, error) {
 		Leases:   &proxyLeases{leases: shared.services.Leases},
 		Exchange: &proxyExchange{exchange: shared.exchange},
 		Audits:   &proxyAudits{recorder: shared.recorder},
+		Clock:    shared.params.Clock,
 		Logger:   shared.params.Logger,
+		IDs:      shared.services.IDs,
 	})
 	if err != nil {
 		return nil, err
@@ -282,6 +314,7 @@ func assembleMCP(shared assembleFaceParams) (*faceServer, error) {
 		Authenticator: mcpAuthenticator{agentIdentifier{agents: shared.services.AgentAuth}},
 		Calls:         calls,
 		Logger:        shared.params.Logger,
+		IDs:           shared.services.IDs,
 	})
 	if err != nil {
 		return nil, err
@@ -301,19 +334,29 @@ func assembleMCP(shared assembleFaceParams) (*faceServer, error) {
 // generichttp 不在其中：它的定义由用户在运行期给出，没有定义就没有 Base URL，
 // 也就没有可注册的东西。
 func assembleAdapters() (*adapters.Registry, error) {
-	gitHub, err := github.New(github.Options{})
+	// 正式构建里这张表恒为空（outbound_release.go），四个 Adapter 因此都用
+	// 自己声明的地址。只有 `-tags e2e` 的构建能把它们指向本地假服务。
+	elsewhere := outboundBaseURLs()
+
+	gitHub, err := github.New(github.Options{BaseURL: elsewhere[github.Service]})
 	if err != nil {
 		return nil, err
 	}
-	cloudFlare, err := cloudflare.New(cloudflare.Options{})
+	cloudFlare, err := cloudflare.New(cloudflare.Options{BaseURL: elsewhere[cloudflare.Service]})
 	if err != nil {
 		return nil, err
 	}
-	openAI, err := model.New(model.Options{Provider: model.ProviderOpenAI})
+	openAI, err := model.New(model.Options{
+		Provider: model.ProviderOpenAI,
+		BaseURL:  elsewhere[string(model.ProviderOpenAI)],
+	})
 	if err != nil {
 		return nil, err
 	}
-	anthropic, err := model.New(model.Options{Provider: model.ProviderAnthropic})
+	anthropic, err := model.New(model.Options{
+		Provider: model.ProviderAnthropic,
+		BaseURL:  elsewhere[string(model.ProviderAnthropic)],
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +446,25 @@ func assembleServices(
 	})
 	if err != nil {
 		return httpapi.Services{}, err
+	}
+
+	// 登记凭据来源。不登记的话注册表是空的，任何一次取用都会以
+	// provider_unavailable 被拒 —— 那是 Fail Closed 的正确结果，
+	// 却让整个产品没有一条可用的凭据路径。
+	//
+	// 两个来源都**不在这里探测可用性**：`op` 没装、钥匙串锁着都是运行期的状态，
+	// 启动时探一次只会把「此刻不可用」固化成「这台机器上没有这个来源」。
+	// 探测发生在登记引用与 Probe 的那一刻。
+	//
+	// Local Vault 不在此列：它还没有实现 credentials.Source（缺 Kind / Available /
+	// Fetch），明文录入的入口也不存在。见 docs/12_PROGRESS.md 的风险区。
+	for _, source := range []credentials.Source{
+		onepassword.New(onepassword.Options{}),
+		keychain.New(keychain.Options{}),
+	} {
+		if registerErr := credentialRegistry.Register(source); registerErr != nil {
+			return httpapi.Services{}, registerErr
+		}
 	}
 
 	// 保险库在这里装配，但**不读文件也不判断它存不存在**（localvault.New 的契约）：

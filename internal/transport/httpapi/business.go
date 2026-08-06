@@ -59,6 +59,18 @@ type Submissions interface {
 	Decide(ctx context.Context, request pipeline.CapabilityRequest) (pipeline.Result, error)
 }
 
+// Declarer 保证一个服务的 Adapter 声明在库里。
+//
+// 决策链路读的是数据库里的声明，而 Adapter 在编译期注册 —— 两者之间需要一座桥。
+// 桥搭在连接流程上而不是启动时：启动时把全部 Adapter 写进去并启用，
+// 等于替用户「连接」了几个他没配过凭据的服务。
+// 只返回 error：连接流程要的是「确保它在」，不需要声明内容。
+// 返回 adapters.Declaration 会把 adapter 包拖进 transport 的依赖里，
+// 而依赖方向只允许 core → adapter（架构测试强制）。
+type Declarer interface {
+	EnsureDeclared(ctx context.Context, service string) error
+}
+
 // Capabilities 回答「这个服务一共声明过哪些操作」。
 //
 // 卷宗的「仍然关闭的权限」要说清这次放行之外还有什么没给（REQ-APPROVAL-001 AC4），
@@ -66,6 +78,9 @@ type Submissions interface {
 // import adapter，实现是 adapter/registry 的注册表。
 type Capabilities interface {
 	Operations(service string) []string
+	// Services 是已声明 Adapter 的服务名。连接身份时据此拒绝一个没有 Adapter
+	// 的服务：那样的身份匹配上了也无从执行，而它在界面上看起来是连好的。
+	Services() []string
 }
 
 type Services struct {
@@ -74,12 +89,15 @@ type Services struct {
 	Submissions Submissions
 	// Capabilities 服务卷宗上的「仍然关闭的权限」。
 	Capabilities Capabilities
-	Requests     pipeline.CapabilityRequestRepository
-	Decisions    decision.DecisionRepository
-	Approvals    *approval.Manager
-	Leases       *lease.Manager
-	Memories     *trust.Manager
-	Identities   matcher.IdentityRepository
+	// Declarer 在连接身份时把该服务的 Adapter 声明写进库（R-24）。
+	// 定义成端口：transport 不得 import adapter。
+	Declarer   Declarer
+	Requests   pipeline.CapabilityRequestRepository
+	Decisions  decision.DecisionRepository
+	Approvals  *approval.Manager
+	Leases     *lease.Manager
+	Memories   *trust.Manager
+	Identities matcher.IdentityRepository
 	// Credentials 只用来读引用元数据与探测健康状态。明文的唯一出口是
 	// Registry.Fetch，其返回类型 secret.Value 在本包不可见（架构测试强制）。
 	Credentials *credentials.Registry
@@ -124,6 +142,8 @@ func (s Services) validate() error {
 		missing = "Identities"
 	case s.Credentials == nil:
 		missing = "Credentials"
+	case s.Declarer == nil:
+		missing = "Declarer"
 	case s.Ledger == nil:
 		missing = "Ledger"
 	case s.Agents == nil:
@@ -149,6 +169,19 @@ type endpoints struct {
 	services Services
 	events   *Broker
 	logger   *slog.Logger
+}
+
+// newEndpoints 构造一组端点，并保证广播器非空。
+//
+// 两条装配路径（httpapi.New 与 NewBusinessHandler）都必须经过这里。
+// 直接写 &endpoints{...} 时漏掉 events 不会有任何编译错误，而后果是
+// **第一次审批决定就让整个进程 panic** —— 决策端点走完之后要广播一条事件，
+// 那时 e.events 是 nil。这个坑踩过一次（见 events_broker_test.go 的回归用例）。
+func newEndpoints(services Services, broker *Broker, logger *slog.Logger) *endpoints {
+	if broker == nil {
+		broker = NewBroker(logger)
+	}
+	return &endpoints{services: services, events: broker, logger: logger}
 }
 
 // statusFor 是错误码到 HTTP 状态码的完整映射。

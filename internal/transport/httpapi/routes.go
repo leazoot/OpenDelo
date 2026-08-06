@@ -84,14 +84,8 @@ func NewBusinessHandler(services Services, logger *slog.Logger) (http.Handler, e
 			WithDetail("业务端点缺少日志器")
 	}
 
-	broker := services.Events
-	if broker == nil {
-		broker = NewBroker(logger)
-	}
-
 	mux := http.NewServeMux()
-	registerBusinessRoutes(mux,
-		&endpoints{services: services, events: broker, logger: logger}, logger)
+	registerBusinessRoutes(mux, newEndpoints(services, services.Events, logger), logger)
 	mux.Handle("/", notFoundHandler(logger))
 
 	// 每个请求都要带 operation_id：审计写入以它为必填，错误响应也要靠它

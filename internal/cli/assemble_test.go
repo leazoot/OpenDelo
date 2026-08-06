@@ -337,3 +337,73 @@ func callMCP(t *testing.T, endpoint, sessionKey, body string) rpcReply {
 	}
 	return reply
 }
+
+/*
+ * operation_id 必须在三个面上都成立（回归，见 docs/12_PROGRESS.md 的 TASK-0702）。
+ *
+ * 它原本只由 8787 的中间件生成，8788 与 8789 上恒为空。后果不是「日志少一个字段」：
+ * `core/pipeline` 把空的 operation_id 当作输入不成立而拒绝（ADR-004 —— 追溯不了的
+ * 请求不能执行），于是**每一次 MCP 工具调用与每一次代理请求都以 invalid_request 结束**，
+ * 而账本上没有任何记录。`CLAUDE.md` §12.6 要求的正是「无未审计路径」。
+ *
+ * 两条用例都打在对外可见的位置上：MCP 的错误消息带 `(operation_id=…)`，
+ * 代理的错误体带 `operation_id` 字段。看不见它就说明这次请求没有身份。
+ */
+
+func TestStart_MCP_GivesEveryRequestAnOperationID_Regression(t *testing.T) {
+	dir := initialized(t)
+	occupied, stop := startInBackground(t, dir)
+	defer stop()
+
+	waitFor(t, occupied.mcp)
+
+	refused := callMCP(t, "http://127.0.0.1:"+strconv.Itoa(occupied.mcp), "",
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	if refused.Error == nil {
+		t.Fatalf("没有 Session Key 也拿到了工具清单：%s", refused.Result)
+	}
+	if !strings.Contains(refused.Error.Message, "operation_id=") {
+		t.Errorf("MCP 的拒绝没有带 operation_id，这次调用无法在账本里定位：%q",
+			refused.Error.Message)
+	}
+}
+
+func TestStart_AgentProxy_GivesEveryRequestAnOperationID_Regression(t *testing.T) {
+	dir := initialized(t)
+	occupied, stop := startInBackground(t, dir)
+	defer stop()
+
+	waitFor(t, occupied.agentProxy)
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+		"http://api.github.com/repos/runcoor/opendelo", nil)
+	if err != nil {
+		t.Fatalf("构造请求失败：%v", err)
+	}
+	client := &http.Client{Transport: &http.Transport{
+		Proxy: func(*http.Request) (*url.URL, error) {
+			return url.Parse("http://127.0.0.1:" + strconv.Itoa(occupied.agentProxy))
+		},
+	}}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("请求代理失败：%v", err)
+	}
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil {
+			t.Errorf("关闭响应体失败：%v", closeErr)
+		}
+	}()
+
+	var refusal struct {
+		Error struct {
+			OperationID string `json:"operation_id"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&refusal); err != nil {
+		t.Fatalf("拒绝的响应体不是错误契约的形状：%v", err)
+	}
+	if refusal.Error.OperationID == "" {
+		t.Error("代理的拒绝没有带 operation_id，这次请求无法在账本里定位")
+	}
+}

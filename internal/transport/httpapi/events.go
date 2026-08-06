@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
+	"github.com/Runcoor/opendelo/internal/platform/clock"
 	"github.com/Runcoor/opendelo/internal/platform/logging"
 )
 
@@ -158,18 +159,29 @@ func (b *Broker) Subscribers() int {
 // 序列化失败只记日志：这条流是通知而不是账本，广播不出去的后果是界面
 // 晚一点刷新，而让它把请求带失败就是拿一次真实的授权去换一次界面更新。
 func (e *endpoints) publish(r *http.Request, eventType string, view any) {
+	publishView(r.Context(), e.events, e.services.Clock, e.logger, eventType, view)
+}
+
+// publishView 是广播的唯一实现。
+//
+// 端点与到达通知（Announcer）共用它：一条事件长什么样、什么时候放弃广播，
+// 只能有一个答案 —— 两份实现里迟早有一份把失败当成致命错误。
+func publishView(
+	ctx context.Context, events *Broker, now clock.Clock,
+	logger *slog.Logger, eventType string, view any,
+) {
 	payload, err := json.Marshal(view)
 	if err != nil {
-		e.logger.WarnContext(r.Context(), "事件无法编码，未广播",
+		logger.WarnContext(ctx, "事件无法编码，未广播",
 			slog.String("type", eventType),
-			slog.String("operation_id", logging.OperationIDFrom(r.Context())))
+			slog.String("operation_id", logging.OperationIDFrom(ctx)))
 		return
 	}
 
-	e.events.Publish(Event{
+	events.Publish(Event{
 		Type: eventType,
 		Data: payload,
-		At:   formatTime(e.services.Clock.Now()),
+		At:   formatTime(now.Now()),
 	})
 }
 
@@ -246,22 +258,25 @@ func (e *endpoints) pump(
 //
 // data 是一行 JSON：视图里的字符串已经过 JSON 转义，不会含裸换行，
 // 因此不需要按行拆分（拆分会让 Console 侧多一步拼接）。
+//
+// **整帧一次写出，不能拆成几次 `Write`。** `net/http` 的响应体后面是一个
+// 2048 字节的 bufio：分几次写的话，超过它的那一帧会被切成多次 socket 写，
+// 而 WebKit 每次「有数据了」只读一次、不重新轮询 —— 后半截要等**下一条事件**
+// 才到得了 Console。这条流不做重放，安静时段里因此永远等不到
+// （Playwright 1.62 的 WebKit 实测，2026-08-05）。
 func writeEvent(w http.ResponseWriter, event Event) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
 
-	if _, err = w.Write([]byte("event: " + event.Type + "\n")); err != nil {
-		return err
-	}
-	if _, err = w.Write([]byte("data: ")); err != nil {
-		return err
-	}
-	if _, err = w.Write(payload); err != nil {
-		return err
-	}
-	_, err = w.Write([]byte("\n\n"))
+	frame := make([]byte, 0, len(payload)+32)
+	frame = append(frame, "event: "...)
+	frame = append(frame, event.Type...)
+	frame = append(frame, "\ndata: "...)
+	frame = append(frame, payload...)
+	frame = append(frame, "\n\n"...)
+	_, err = w.Write(frame)
 	return err
 }
 

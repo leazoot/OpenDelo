@@ -2,6 +2,8 @@ package repo
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/Runcoor/opendelo/internal/credential/registry"
@@ -78,21 +80,124 @@ func toProvider(row queries.CredentialProvider) (registry.Provider, error) {
 
 // CredentialReferences 是 registry.ReferenceRepository 的 SQLite 实现。
 type CredentialReferences struct {
-	read  *queries.Queries
-	write *queries.Queries
+	read   *queries.Queries
+	write  *queries.Queries
+	writer *sql.DB
 }
 
 var _ registry.ReferenceRepository = (*CredentialReferences)(nil)
 
 // NewCredentialReferences 绑定到已迁移的数据库。
 func NewCredentialReferences(db *store.DB) *CredentialReferences {
-	return &CredentialReferences{read: queries.New(db.Reader()), write: queries.New(db.Writer())}
+	return &CredentialReferences{
+		read:   queries.New(db.Reader()),
+		write:  queries.New(db.Writer()),
+		writer: db.Writer(),
+	}
+}
+
+// CreateRegistration 在一个事务内登记来源与引用（跨表写入，`database.md` §6.1）。
+//
+// 两处都是先查后插：来源按（种类，名字）、引用按（来源，条目，字段）。
+// 查与插分在两个事务里的话，两个并发的登记会同时查不到再同时插入，
+// 后一个撞上唯一索引失败 —— 用户看到的是「连接身份偶尔报错」。
+func (r *CredentialReferences) CreateRegistration(
+	ctx context.Context, provider registry.Provider, reference registry.Reference,
+) (created registry.Reference, err error) {
+	transaction, err := r.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return registry.Reference{}, writeError(err, "开启凭据登记事务失败")
+	}
+	// 提交之后回滚会返回 ErrTxDone，那是正常路径；其余错误说明事务没能干净收场，
+	// 必须并进返回值 —— 悬着的事务会一直占着 SQLite 唯一的写连接。
+	defer func() {
+		rollbackErr := transaction.Rollback()
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, writeError(rollbackErr, "回滚凭据登记事务失败"))
+		}
+	}()
+
+	inTransaction := r.write.WithTx(transaction)
+
+	providerID, err := findOrCreateProvider(ctx, inTransaction, provider)
+	if err != nil {
+		return registry.Reference{}, err
+	}
+	reference.ProviderID = providerID
+
+	settled, err := findOrCreateReference(ctx, inTransaction, reference)
+	if err != nil {
+		return registry.Reference{}, err
+	}
+
+	if err := transaction.Commit(); err != nil {
+		return registry.Reference{}, writeError(err, "提交凭据登记事务失败")
+	}
+	return settled, nil
+}
+
+func findOrCreateProvider(
+	ctx context.Context, q *queries.Queries, provider registry.Provider,
+) (string, error) {
+	existing, err := q.GetCredentialProviderByKindAndLabel(ctx,
+		queries.GetCredentialProviderByKindAndLabelParams{
+			Kind: string(provider.Kind), Label: provider.Label,
+		})
+	if err == nil {
+		return existing.ID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", readError(err, "按种类与名字读取凭据来源失败")
+	}
+
+	row, err := q.CreateCredentialProvider(ctx, queries.CreateCredentialProviderParams{
+		ID:        provider.ID,
+		Kind:      string(provider.Kind),
+		Label:     provider.Label,
+		CreatedAt: encodeTime(provider.CreatedAt),
+		UpdatedAt: encodeTime(provider.UpdatedAt),
+	})
+	if err != nil {
+		return "", writeError(err, "写入凭据来源 "+provider.ID+" 失败")
+	}
+	return row.ID, nil
+}
+
+func findOrCreateReference(
+	ctx context.Context, q *queries.Queries, reference registry.Reference,
+) (registry.Reference, error) {
+	existing, err := q.GetCredentialReferenceByCoordinates(ctx,
+		queries.GetCredentialReferenceByCoordinatesParams{
+			ProviderID:      reference.ProviderID,
+			ProviderItemRef: reference.ItemRef,
+			Field:           reference.Field,
+		})
+	if err == nil {
+		return toReference(existing)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return registry.Reference{}, readError(err, "按坐标读取凭据引用失败")
+	}
+
+	row, err := q.CreateCredentialReference(ctx, createParams(reference))
+	if err != nil {
+		return registry.Reference{}, writeError(err, "写入凭据引用 "+reference.ID+" 失败")
+	}
+	return toReference(row)
 }
 
 func (r *CredentialReferences) CreateReference(
 	ctx context.Context, reference registry.Reference,
 ) (registry.Reference, error) {
-	row, err := r.write.CreateCredentialReference(ctx, queries.CreateCredentialReferenceParams{
+	row, err := r.write.CreateCredentialReference(ctx, createParams(reference))
+	if err != nil {
+		return registry.Reference{}, writeError(err, "写入凭据引用 "+reference.ID+" 失败")
+	}
+	return toReference(row)
+}
+
+func createParams(reference registry.Reference) queries.CreateCredentialReferenceParams {
+	return queries.CreateCredentialReferenceParams{
 		ID:              reference.ID,
 		ProviderID:      reference.ProviderID,
 		ProviderItemRef: reference.ItemRef,
@@ -105,11 +210,7 @@ func (r *CredentialReferences) CreateReference(
 		LastVerifiedAt:  optionalTime(reference.LastVerifiedAt),
 		CreatedAt:       encodeTime(reference.CreatedAt),
 		UpdatedAt:       encodeTime(reference.UpdatedAt),
-	})
-	if err != nil {
-		return registry.Reference{}, writeError(err, "写入凭据引用 "+reference.ID+" 失败")
 	}
-	return toReference(row)
 }
 
 func (r *CredentialReferences) ReferenceByID(ctx context.Context, id string) (registry.Reference, error) {

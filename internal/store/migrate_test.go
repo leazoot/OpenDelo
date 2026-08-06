@@ -16,7 +16,7 @@ import (
  * 回滚不是生产入口（见 rollback 的注释），但它的 Down 段必须真的被执行过。
  */
 
-const latestVersion int64 = 20
+const latestVersion int64 = 21
 
 func openForMigration(t *testing.T) *DB {
 	t.Helper()

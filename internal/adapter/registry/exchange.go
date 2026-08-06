@@ -53,8 +53,11 @@ type ExchangeReply struct {
 	// StatusCode 是给 Agent 的 HTTP 状态码，不是外部服务的原始状态码 ——
 	// 后者可能携带外部服务的内部信息。
 	StatusCode int
-	Body       []byte
-	Usage      ModelUsage
+	// UpstreamStatus 是外部服务真正答的状态码，0 表示没有拿到过响应。
+	// 只进账本与服务端日志，不进给 Agent 的答复（见 Result.UpstreamStatus）。
+	UpstreamStatus int
+	Body           []byte
+	Usage          ModelUsage
 }
 
 // Exchange 执行一次已经拿到 Lease 的请求。
@@ -157,5 +160,10 @@ func replyOf(output ExecuteOutput) (ExchangeReply, error) {
 	if !result.OK {
 		status = 502
 	}
-	return ExchangeReply{StatusCode: status, Body: encoded, Usage: output.Usage}, nil
+	return ExchangeReply{
+		StatusCode:     status,
+		UpstreamStatus: result.UpstreamStatus,
+		Body:           encoded,
+		Usage:          output.Usage,
+	}, nil
 }

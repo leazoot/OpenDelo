@@ -56,6 +56,9 @@ func (p *previewAdapter) Capabilities() []registry.Capability {
 	}
 }
 
+func (p *previewAdapter) BaseURL() string                 { return "https://example.invalid" }
+func (p *previewAdapter) AuthScheme() registry.AuthScheme { return registry.AuthBearer }
+
 func (p *previewAdapter) PreviewSource(string) string { return p.source }
 
 func (p *previewAdapter) PreviewCapability(
@@ -80,6 +83,8 @@ type silentAdapter struct{ capabilities []registry.Capability }
 func (s silentAdapter) Service() string                     { return "silentsvc" }
 func (s silentAdapter) Kind() registry.Kind                 { return registry.KindGenericHTTP }
 func (s silentAdapter) Capabilities() []registry.Capability { return s.capabilities }
+func (s silentAdapter) BaseURL() string                     { return "https://example.invalid" }
+func (s silentAdapter) AuthScheme() registry.AuthScheme     { return registry.AuthBearer }
 
 func newPreviewExchange(
 	t *testing.T, adapter registry.Adapter, credentials registry.Credentials,

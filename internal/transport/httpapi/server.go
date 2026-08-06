@@ -86,7 +86,8 @@ func New(options Options) (*Server, error) {
 	// 就连首屏都取不到。
 	versioned := http.NewServeMux()
 	versioned.Handle("/v1/gateway/status", allowMethods(options.Logger, status, http.MethodGet, http.MethodHead))
-	registerBusinessRoutes(versioned, &endpoints{services: options.Services, logger: options.Logger}, options.Logger)
+	registerBusinessRoutes(versioned,
+		newEndpoints(options.Services, options.Services.Events, options.Logger), options.Logger)
 	versioned.Handle("/v1/", notFoundHandler(options.Logger))
 
 	// 过了会话校验的一定是 Console：这个面只认会话令牌。Agent 的调用方身份
@@ -180,8 +181,34 @@ func (s *Server) Serve(ctx context.Context) error {
 		// 用 WithoutCancel：ctx 已经结束，再从它派生的话关闭余量会立刻到期。
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
 		defer cancel()
-		return s.http.Shutdown(shutdownCtx)
+		return closeGracefully(shutdownCtx, s.http, s.logger, "Web API")
 	}
+}
+
+/*
+ * closeGracefully 先优雅关闭，余量用完就强制断开。
+ *
+ * 余量到期**不是失败**。浏览器会预开连接、也会在页面关掉之后再握一会儿手，
+ * 而 `http.Server.Shutdown` 要等这些连接自己散掉。把它当成错误的后果是：
+ * 开着 Console 按 Ctrl-C，网关以退出码 1 结束 —— 用户什么也没做错。
+ *
+ * 强制断开仍然写一条 warn：真的有处理器卡住时，这条日志是唯一的线索。
+ * 由 Firefox 上的兼容性用例撞出来（它比另外两个引擎更晚放开连接）。
+ */
+func closeGracefully(
+	ctx context.Context, server *http.Server, logger *slog.Logger, face string,
+) error {
+	err := server.Shutdown(ctx)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+
+	logger.WarnContext(ctx, "优雅关闭的余量用完，强制断开剩余连接",
+		slog.String("face", face))
+	return server.Close()
 }
 
 func notFoundHandler(logger *slog.Logger) http.Handler {

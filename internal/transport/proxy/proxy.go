@@ -4,9 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"net/url"
+	"time"
 
 	"github.com/Runcoor/opendelo/internal/core/gateway"
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
+	"github.com/Runcoor/opendelo/internal/platform/clock"
+	"github.com/Runcoor/opendelo/internal/platform/logging"
 )
 
 /*
@@ -90,6 +93,12 @@ type Reply struct {
 	StatusCode  int
 	ContentType string
 	Body        []byte
+	// UpstreamStatus 是外部服务真正答的状态码，0 表示没有拿到过响应。
+	//
+	// **只进服务端日志**，不写给 Agent：写给 Agent 的是 StatusCode
+	// 那个 200/502 的映射。少了它，一次转发失败在日志里只剩「502」，
+	// 而真正发生的可能是上游答了 422（R-44）。
+	UpstreamStatus int
 }
 
 // Exchange 经 Adapter 注入凭据并完成一次出站请求。
@@ -113,12 +122,36 @@ type Blocked struct {
 	Reason string
 }
 
-// Audits 记录被拦下的直连尝试。
+// Executed 是一次已经发出去的转发，交给审计。
 //
-// 记不下来不改变拦截结果：请求已经被拒了，审计写入失败只会让账本缺一条，
-// 而那要让运维知道 —— 因此实现返回的错误由本包写进日志，不吞掉
+// 与 Blocked 一样只有元数据。UpstreamStatus 是外部服务真正答的状态码，
+// 0 表示没有拿到过响应 —— 走到这里时它不该为 0。
+type Executed struct {
+	Caller         Caller
+	Target         Target
+	Route          Route
+	Grant          Grant
+	UpstreamStatus int
+	// Succeeded 区分「上游答成了」与「上游答了但没答成」。
+	// 后者同样是一次执行：它发生过，可能已经改变了外部状态。
+	Succeeded bool
+	// Duration 是这次出站真正花掉的时间。
+	//
+	// 账本上「耗时」那一格是给人看的：一条经代理的执行显示 0 ms、
+	// 旁边经 MCP 的显示 5 ms，读起来是「这次没花时间」而不是「没测」（R-48）。
+	Duration time.Duration
+}
+
+// Audits 记录这个面上发生过的事。
+//
+// RecordBlocked 记不下来不改变拦截结果：请求已经被拒了，审计写入失败只会让
+// 账本缺一条，而那要让运维知道 —— 因此实现返回的错误由本包写进日志，不吞掉。
+//
+// RecordExecuted 则相反：出站已经发生，账本上少这一条就等于多了一条无痕的路
+// （不可协商约束第 6 条）。写不进去时本包不把响应交给 Agent。
 type Audits interface {
 	RecordBlocked(ctx context.Context, blocked Blocked) error
+	RecordExecuted(ctx context.Context, executed Executed) error
 }
 
 // Options 是 Proxy 的依赖，全部必填。
@@ -131,7 +164,13 @@ type Options struct {
 	Leases        Leases
 	Exchange      Exchange
 	Audits        Audits
-	Logger        *slog.Logger
+	// Clock 给执行事件计时。经 clock 而不是直接调 time.Now：耗时会出现在
+	// 账本上，用真实时钟测就只能靠 sleep 制造时序（`.claude/rules/backend.md` §16.1）。
+	Clock  clock.Clock
+	Logger *slog.Logger
+	// IDs 生成 operation_id。没有它这个面上的每一次请求都无法被审计追溯，
+	// 而审计是执行的前置条件（ADR-004），因此它与认证器一样是必填。
+	IDs logging.IDSource
 	// MaxRequestBytes 为零时用 DefaultMaxRequestBytes。
 	MaxRequestBytes int64
 }
@@ -150,7 +189,9 @@ type Proxy struct {
 	leases        Leases
 	exchange      Exchange
 	audits        Audits
+	clock         clock.Clock
 	logger        *slog.Logger
+	ids           logging.IDSource
 	maxBytes      int64
 }
 
@@ -172,8 +213,12 @@ func New(options Options) (*Proxy, error) {
 		return nil, missing("出站通道")
 	case options.Audits == nil:
 		return nil, missing("审计入口")
+	case options.Clock == nil:
+		return nil, missing("时钟")
 	case options.Logger == nil:
 		return nil, missing("日志")
+	case options.IDs == nil:
+		return nil, missing("operation_id 生成器")
 	}
 
 	maxBytes := options.MaxRequestBytes
@@ -187,7 +232,9 @@ func New(options Options) (*Proxy, error) {
 		leases:        options.Leases,
 		exchange:      options.Exchange,
 		audits:        options.Audits,
+		clock:         options.Clock,
 		logger:        options.Logger,
+		ids:           options.IDs,
 		maxBytes:      maxBytes,
 	}, nil
 }

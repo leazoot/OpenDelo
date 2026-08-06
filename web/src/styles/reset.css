@@ -8,6 +8,20 @@
   margin: 0;
 }
 
+/*
+ * 列表的默认缩进要清掉。
+ *
+ * `<ul>`/`<ol>` 自带 `padding-inline-start: 40px`，而本产品的列表全部是布局结构
+ * （账本条目、身份卡片、缝前的请求），没有一个是要显示项目符号的正文列表。
+ * 留着它的代价不是「缩进了一点」：Ledger 的脊线是绝对定位在时间轴上的，
+ * 条目整体右移 40px 而脊线不动，Agent 名就压在脊线上（2026-08-06 人工验收）。
+ * 而脊线是缝的纵向投影 —— 它落在哪里是这一页的空间常量（REQ-UI-002）。
+ */
+ul,
+ol {
+  padding-inline-start: 0;
+}
+
 html,
 body,
 #root {
@@ -36,6 +50,43 @@ img,
 svg {
   display: block;
   max-width: 100%;
+}
+
+/*
+ * 跑不动 Console 的浏览器看到的那段话（REQ-NFR-003 AC2，标记在 index.html）。
+ *
+ * 默认隐藏：能跑到这里说明样式表与脚本都在正常工作。两条揭开的路各自独立 ——
+ * 认不出 ESM 的由 public/unsupported.js 挂上 .no-modules，
+ * 关掉 JS 的由 <noscript> 里的 public/unsupported.css 顶上。
+ */
+#unsupported {
+  display: none;
+  max-width: 46ch;
+  margin: 64px auto;
+  padding: 24px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--plane);
+}
+
+.no-modules #unsupported {
+  display: block;
+}
+
+.unsupported-title {
+  margin-bottom: 8px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.unsupported-blurb {
+  margin-bottom: 24px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.unsupported-blurb:last-child {
+  margin-bottom: 0;
 }
 
 /* 焦点必须始终可见，只在键盘导航时显示。 */

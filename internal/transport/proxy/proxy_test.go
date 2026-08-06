@@ -10,12 +10,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Runcoor/opendelo/internal/core/gateway"
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
+	"github.com/Runcoor/opendelo/internal/platform/clock"
 	"github.com/Runcoor/opendelo/internal/platform/logging"
+	"github.com/Runcoor/opendelo/internal/platform/ulid"
 	"github.com/Runcoor/opendelo/test/sentinel"
 )
+
+// testIDs 是用例用的 operation_id 生成器。
+func testIDs() *ulid.Generator { return ulid.New(clock.NewFixed(time.Unix(0, 0).UTC())) }
 
 /*
  * 8788 面的用例（REQ-PROXY-001/002）。
@@ -63,12 +69,19 @@ type fakeLeases struct {
 	callers []Caller
 	routes  []Route
 	order   *[]string
+	// moment 与 elapsed 让**出站之前**的一步也花掉时间。没有它，
+	// 「计时起点在 Send 之前还是在处理链开头」这两种写法在用例里毫无区别。
+	moment  *clock.Fixed
+	elapsed time.Duration
 }
 
 func (f *fakeLeases) Authorize(_ context.Context, caller Caller, route Route) (Grant, error) {
 	f.callers = append(f.callers, caller)
 	f.routes = append(f.routes, route)
 	record(f.order, "authorize")
+	if f.moment != nil && f.elapsed > 0 {
+		f.moment.Advance(f.elapsed)
+	}
 	return f.grant, f.err
 }
 
@@ -77,22 +90,38 @@ type fakeExchange struct {
 	err   error
 	calls []recordedCall
 	order *[]string
+	// moment 与 elapsed 让出站「花掉时间」。真时钟做不到这一点而又不睡觉，
+	// 而账本上的耗时必须是量出来的，不是填的（`.claude/rules/testing.md` §4.6）。
+	moment  *clock.Fixed
+	elapsed time.Duration
 }
 
 func (f *fakeExchange) Send(_ context.Context, grant Grant, route Route, body []byte) (Reply, error) {
 	f.calls = append(f.calls, recordedCall{Grant: grant, Route: route, Body: body})
 	record(f.order, "send")
+	if f.moment != nil && f.elapsed > 0 {
+		f.moment.Advance(f.elapsed)
+	}
 	return f.reply, f.err
 }
 
 type fakeAudits struct {
-	blocked []Blocked
-	err     error
+	blocked  []Blocked
+	executed []Executed
+	err      error
+	// executedErr 单独一个字段：拒绝路径与执行路径对记账失败的反应不同
+	// （前者照常拒绝，后者不把响应交给 Agent），用例要能分别驱动它们。
+	executedErr error
 }
 
 func (f *fakeAudits) RecordBlocked(_ context.Context, blocked Blocked) error {
 	f.blocked = append(f.blocked, blocked)
 	return f.err
+}
+
+func (f *fakeAudits) RecordExecuted(_ context.Context, executed Executed) error {
+	f.executed = append(f.executed, executed)
+	return f.executedErr
 }
 
 // serving 造一个正在服务的可用状态。
@@ -116,6 +145,7 @@ type harness struct {
 	leases        *fakeLeases
 	exchange      *fakeExchange
 	audits        *fakeAudits
+	moment        *clock.Fixed
 	logs          *bytes.Buffer
 	order         []string
 }
@@ -123,7 +153,11 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 
-	h := &harness{logs: &bytes.Buffer{}, availability: gateway.New()}
+	h := &harness{
+		logs:         &bytes.Buffer{},
+		availability: gateway.New(),
+		moment:       clock.NewFixed(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)),
+	}
 	h.availability.Serve()
 	h.authenticator = &fakeAuthenticator{
 		caller: Caller{AgentID: "agent_1", WorkspaceID: "workspace_1"}, order: &h.order,
@@ -136,11 +170,14 @@ func newHarness(t *testing.T) *harness {
 		},
 		order: &h.order,
 	}
-	h.leases = &fakeLeases{grant: Grant{LeaseID: "lease_1", IdentityID: "identity_1"}, order: &h.order}
+	h.leases = &fakeLeases{
+		grant: Grant{LeaseID: "lease_1", IdentityID: "identity_1"}, order: &h.order, moment: h.moment,
+	}
 	h.audits = &fakeAudits{}
 	h.exchange = &fakeExchange{
-		reply: Reply{StatusCode: http.StatusOK, ContentType: "application/json", Body: []byte(`{"name":"console"}`)},
-		order: &h.order,
+		reply:  Reply{StatusCode: http.StatusOK, ContentType: "application/json", Body: []byte(`{"name":"console"}`)},
+		order:  &h.order,
+		moment: h.moment,
 	}
 	return h
 }
@@ -155,7 +192,9 @@ func (h *harness) handler(t *testing.T) http.Handler {
 		Leases:        h.leases,
 		Exchange:      h.exchange,
 		Audits:        h.audits,
+		Clock:         h.moment,
 		Logger:        logging.New(logging.Options{Level: slog.LevelDebug, Writer: h.logs}),
+		IDs:           testIDs(),
 	})
 	if err != nil {
 		t.Fatalf("构造 Proxy 失败：%v", err)
@@ -191,18 +230,22 @@ func TestNew_MissingAnyDependency_RefusesToConstruct(t *testing.T) {
 			Leases:        &fakeLeases{},
 			Exchange:      &fakeExchange{},
 			Audits:        &fakeAudits{},
+			Clock:         clock.NewFixed(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)),
 			Logger:        slog.New(slog.DiscardHandler),
+			IDs:           testIDs(),
 		}
 	}
 
 	cases := map[string]func(*Options){
-		"缺可用状态":      func(o *Options) { o.Availability = nil },
-		"缺认证器":       func(o *Options) { o.Authenticator = nil },
-		"缺受控服务解析":    func(o *Options) { o.Services = nil },
-		"缺 Lease 匹配": func(o *Options) { o.Leases = nil },
-		"缺出站通道":      func(o *Options) { o.Exchange = nil },
-		"缺审计入口":      func(o *Options) { o.Audits = nil },
-		"缺日志":        func(o *Options) { o.Logger = nil },
+		"缺可用状态":              func(o *Options) { o.Availability = nil },
+		"缺认证器":               func(o *Options) { o.Authenticator = nil },
+		"缺受控服务解析":            func(o *Options) { o.Services = nil },
+		"缺 Lease 匹配":         func(o *Options) { o.Leases = nil },
+		"缺出站通道":              func(o *Options) { o.Exchange = nil },
+		"缺审计入口":              func(o *Options) { o.Audits = nil },
+		"缺时钟":                func(o *Options) { o.Clock = nil },
+		"缺日志":                func(o *Options) { o.Logger = nil },
+		"缺 operation_id 生成器": func(o *Options) { o.IDs = nil },
 	}
 	for name, remove := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -222,7 +265,8 @@ func TestNew_MissingAnyDependency_RefusesToConstruct(t *testing.T) {
 func TestNew_ZeroMaxRequestBytes_FallsBackToTheDefault(t *testing.T) {
 	proxy, err := New(Options{
 		Availability: serving(), Authenticator: &fakeAuthenticator{}, Services: &fakeServices{},
-		Leases: &fakeLeases{}, Exchange: &fakeExchange{}, Audits: &fakeAudits{},
+		Leases: &fakeLeases{}, Exchange: &fakeExchange{}, Audits: &fakeAudits{}, IDs: testIDs(),
+		Clock:  clock.NewFixed(time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)),
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
@@ -466,8 +510,8 @@ func TestServe_BodyOverTheLimit_Returns400AndProducesNoOutboundTraffic(t *testin
 	proxy, err := New(Options{
 		Availability: h.availability, Authenticator: h.authenticator,
 		Services: h.services, Leases: h.leases,
-		Exchange: h.exchange, Audits: h.audits,
-		Logger: slog.New(slog.DiscardHandler), MaxRequestBytes: 8,
+		Exchange: h.exchange, Audits: h.audits, Clock: h.moment,
+		Logger: slog.New(slog.DiscardHandler), IDs: testIDs(), MaxRequestBytes: 8,
 	})
 	if err != nil {
 		t.Fatalf("构造失败：%v", err)

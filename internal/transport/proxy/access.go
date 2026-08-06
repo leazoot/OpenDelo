@@ -28,7 +28,7 @@ func (p *Proxy) logAccess(
 	r *http.Request,
 	host, path string,
 	route Route, grant Grant,
-	status int, outcome string,
+	status, upstreamStatus int, outcome string,
 ) {
 	p.logger.LogAttrs(r.Context(), slog.LevelInfo, "agent proxy request",
 		slog.String("method", r.Method),
@@ -38,6 +38,10 @@ func (p *Proxy) logAccess(
 		slog.String("operation", route.Operation),
 		slog.String("lease_id", grant.LeaseID),
 		slog.Int("status", status),
+		// 上游真正答的那个数字。与 status 分开记：前者是我们答给 Agent 的
+		// （只有 200 与 502），后者是外部服务答给我们的。合成一个之后，
+		// 排查时就分不清「上游拒了」与「我们没发出去」（R-44）。
+		slog.Int("upstream_status", upstreamStatus),
 		slog.String("outcome", outcome),
 		slog.String("authorization", r.Header.Get("Authorization")),
 		slog.String("proxy_authorization", r.Header.Get(sessionHeader)),

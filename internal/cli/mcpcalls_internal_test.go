@@ -30,6 +30,7 @@ import (
 	"github.com/Runcoor/opendelo/internal/platform/ulid"
 	"github.com/Runcoor/opendelo/internal/store"
 	"github.com/Runcoor/opendelo/internal/store/repo"
+	"github.com/Runcoor/opendelo/internal/transport/httpapi"
 	"github.com/Runcoor/opendelo/internal/transport/mcpsrv"
 	"github.com/Runcoor/opendelo/test/fixtures"
 	"github.com/Runcoor/opendelo/test/sentinel"
@@ -73,6 +74,13 @@ type arrivals struct {
 	server        *httptest.Server
 	count         int
 	authorization string
+	// body 是出站正文。**必须记**：只记次数与 Authorization 的话，
+	// 「请求发出去了、带着凭据」与「请求发出去了、带着凭据、内容却是空的」
+	// 长成同一个样子 —— 后者正是 2026-08-04 人工验收撞出的缺陷。
+	body []byte
+	// status 是假上游要答的状态码，0 表示 200。用例据此模拟真实的失败形状：
+	// 「连不上」与「上游答了 422」在账本上不该长成同一件事。
+	status int
 }
 
 func newArrivals(t *testing.T, body string) *arrivals {
@@ -82,7 +90,15 @@ func newArrivals(t *testing.T, body string) *arrivals {
 	recorded.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		recorded.count++
 		recorded.authorization = r.Header.Get("Authorization")
+		sent, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			t.Errorf("假上游读请求正文失败：%v", readErr)
+		}
+		recorded.body = sent
 		w.Header().Set("Content-Type", "application/json")
+		if recorded.status != 0 {
+			w.WriteHeader(recorded.status)
+		}
 		if _, err := w.Write([]byte(body)); err != nil {
 			t.Errorf("假上游写响应失败：%v", err)
 		}
@@ -155,7 +171,8 @@ func newCallHarness(t *testing.T, environment matcher.Environment) callHarness {
 		Identities: identities, Agents: repo.NewAgents(database),
 		Devices: repo.NewDevices(database), Declarations: repo.NewServiceAdapters(database),
 		Registry: registry, Previews: exchange, Requests: requests,
-		Clock: moment, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Arrivals: announcerFor(t, registry, moment),
+		Clock:    moment, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatalf("构造请求编排失败：%v", err)
@@ -426,6 +443,86 @@ func TestMCPCall_UpstreamFailure_IsRecordedAsAFailedExecutionNotASuccess(t *test
 	assertExecutionRecorded(t, harness, audit.OutcomeFailed)
 }
 
+/*
+ * TestMCPCall_UpstreamStatus_ReachesTheLedger（回归，R-44）
+ *
+ * 上游的状态码在映射成对外错误码的那一刻被丢掉了，账本里记下的是我们自己的
+ * **502**。于是排查一次失败只能看见「网关不可用」，而真正发生的是 GitHub 答了
+ * 422 —— 人工验收时为定位这一件事多花了半小时。
+ *
+ * 状态码不是报文：对外的错误码与消息一个字不改，只是账本上记下的那个数字
+ * 变成真实发生过的那一个（`audit.Event.ResponseStatus` 的本意正是如此，
+ * 它的注释写着「为 0 表示没有发出过外部请求」）。
+ */
+func TestMCPCall_UpstreamStatus_ReachesTheLedger(t *testing.T) {
+	harness := newCallHarness(t, matcher.EnvironmentNonProduction)
+	ctx := callContext(t)
+
+	harness.upstream.status = http.StatusUnprocessableEntity
+
+	if _, err := harness.calls.Call(ctx, readCall(readArguments)); err != nil {
+		t.Fatalf("上游答 422 被折成了错误而不是一次失败的执行：%v", err)
+	}
+
+	event := executionEvent(t, harness)
+	if event.ResponseStatus != http.StatusUnprocessableEntity {
+		t.Errorf("账本上的 response_status 是 %d，上游真正答的是 422 —— "+
+			"记我们自己的映射码，排查时看见的就只有「网关不可用」", event.ResponseStatus)
+	}
+}
+
+// TestMCPCall_NoOutboundResponse_LeavesTheStatusAtZero：连不上时**没有**上游状态码。
+//
+// 补这一条是因为「记真实状态码」很容易滑成「记点什么」：把连不上也记成某个
+// 数字的话，`ResponseStatus` 那句「为 0 表示没有发出过外部请求」就不再成立。
+func TestMCPCall_NoOutboundResponse_LeavesTheStatusAtZero(t *testing.T) {
+	harness := newCallHarness(t, matcher.EnvironmentNonProduction)
+	ctx := callContext(t)
+
+	harness.upstream.server.Close()
+
+	if _, err := harness.calls.Call(ctx, readCall(readArguments)); err != nil {
+		t.Fatalf("上游不可达被折成了错误：%v", err)
+	}
+
+	if event := executionEvent(t, harness); event.ResponseStatus != 0 {
+		t.Errorf("上游根本没答，账本上却记了 %d", event.ResponseStatus)
+	}
+}
+
+// TestMCPCall_SuccessfulCall_RecordsWhatTheUpstreamAnswered：成功那一路同样记真的。
+func TestMCPCall_SuccessfulCall_RecordsWhatTheUpstreamAnswered(t *testing.T) {
+	harness := newCallHarness(t, matcher.EnvironmentNonProduction)
+	ctx := callContext(t)
+
+	harness.upstream.status = http.StatusCreated
+
+	if _, err := harness.calls.Call(ctx, readCall(readArguments)); err != nil {
+		t.Fatalf("调用失败：%v", err)
+	}
+
+	if event := executionEvent(t, harness); event.ResponseStatus != http.StatusCreated {
+		t.Errorf("上游答的是 201，账本上记的是 %d", event.ResponseStatus)
+	}
+}
+
+// executionEvent 取出这次调用留下的那条执行记录。
+func executionEvent(t *testing.T, harness callHarness) audit.Event {
+	t.Helper()
+
+	events, err := harness.events.Events(t.Context(), time.Time{}, 20)
+	if err != nil {
+		t.Fatalf("读取账本失败：%v", err)
+	}
+	for _, event := range events {
+		if event.Type == audit.EventAdapterExecuted {
+			return event
+		}
+	}
+	t.Fatal("账本里没有执行记录")
+	return audit.Event{}
+}
+
 func TestNewMCPCalls_MissingDependency_IsRefused(t *testing.T) {
 	// 少一项依赖时不构造。缺账本的编排会一路跑到放行才发现写不了审计，
 	// 而那时凭据已经取出来过一次。
@@ -490,4 +587,21 @@ func hasEventType(t *testing.T, harness callHarness, want audit.EventType) bool 
 		}
 	}
 	return false
+}
+
+// announcerFor 装出这些用例要的到达通知。
+//
+// 用真实实现而不是桩：这些用例跑的是完整的决策路径，而通知就在那条路径上 ——
+// 换成桩之后，「通知会不会把请求带失败」这件事在这里就测不到了。
+func announcerFor(t *testing.T, registry *adapters.Registry, moment clock.Clock) *httpapi.Announcer {
+	t.Helper()
+
+	quiet := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	announcer, err := httpapi.NewAnnouncer(httpapi.Announcement{
+		Events: httpapi.NewBroker(quiet), Capabilities: registry, Clock: moment, Logger: quiet,
+	})
+	if err != nil {
+		t.Fatalf("构造到达通知失败：%v", err)
+	}
+	return announcer
 }

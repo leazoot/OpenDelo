@@ -67,6 +67,24 @@ func (p *Pipeline) SettleApproval(ctx context.Context, input SettleInput) (Settl
 		return SettleResult{}, err
 	}
 
+	// 放行之前先看授权窗口还在不在（R-43）。
+	//
+	// 收敛出来的窗口是**决策那一刻**算的，而人可以隔更久才点头。窗口已经过去时
+	// `lease.Issue` 会正确拒签，但那时审批项已经被 Settle 消费、账本上已经写着
+	// 「用户放行」—— 一件没有发生的事。所以这道检查必须在消费之前，
+	// 而且只挡放行：拒绝一条过期的请求仍然是有意义的。
+	if approval.Allows(input.Action) {
+		granted, scopeErr := decodeScope(record.ResolvedScope)
+		if scopeErr != nil {
+			return SettleResult{}, scopeErr
+		}
+		if !granted.ExpiresAt.After(p.clock.Now()) {
+			return SettleResult{}, apperr.New(apperr.CodeApprovalTimeout).
+				WithDetail("这次授权的时间窗已经过去，签不出 Lease 了。" +
+					"让 Agent 重新发起一次请求，缝前会再出现一条待决项")
+		}
+	}
+
 	settlement, err := p.approvals.Settle(ctx, approval.SettleRequest{
 		ApprovalID:            input.ApprovalID,
 		Action:                input.Action,
@@ -341,4 +359,25 @@ func decodeScope(resolved string) (scope.Scope, error) {
 		return scope.Scope{}, err
 	}
 	return granted, nil
+}
+
+// RecordAgentTrusted 记下一次「用户把这个 Agent 升为已知」（REQ-AGENT-002 AC3）。
+//
+// 与 RecordStrongAuthLocked 同理：这件事发生在决策链路之外，没有请求也没有决策
+// 可以挂，但它改变的是**风险引擎的输入** —— 从这一刻起，这个 Agent 的写操作
+// 有了被自动放行的可能。写不进账本就不升级（ADR-004）：一次不在账本上的
+// 信任提升，比一次没做成的糟得多。
+func (p *Pipeline) RecordAgentTrusted(ctx context.Context, agentID, operationID string) error {
+	_, err := p.audit.Record(ctx, audit.Event{
+		OperationID:   operationID,
+		Type:          audit.EventAgentTrusted,
+		AgentID:       agentID,
+		Service:       "opendelo",
+		Operation:     "agent.trust",
+		Resource:      "{}",
+		ResolvedScope: "{}",
+		Outcome:       audit.OutcomeSucceeded,
+		Metadata:      `{"trust_level":"known"}`,
+	})
+	return err
 }

@@ -126,6 +126,11 @@ const (
 	ReasonLowRisk Reason = "low_risk"
 	// ReasonTrustMemoryMatch 中风险且完全落在一条已学习的授权之内。
 	ReasonTrustMemoryMatch Reason = "trust_memory_match"
+	// ReasonActiveLease 完全落在一条**已经签发**的授权之内。
+	//
+	// 与 trust_memory_match 的区别在于依据：那一条靠的是用户学下来的规则，
+	// 这一条靠的是用户当场为这个确切范围签出的那份授权本身。
+	ReasonActiveLease Reason = "active_lease"
 	// ReasonRequiresConfirmation 是默认分支：走到这里的一律要人确认。
 	ReasonRequiresConfirmation Reason = "requires_confirmation"
 )
@@ -141,6 +146,15 @@ type Grant struct {
 	// 「始终问我」的记忆与一条「今后自动允许」的记忆在这里长得一模一样，
 	// 而前者会因为「命中了已学习的授权」被自动放行 —— 与用户的选择正好相反。
 	AlwaysAsk bool
+}
+
+// ActiveLease 是一条已经签发、仍然生效的授权。
+//
+// 调用方只把「还活着」的传进来：过期、用满、已收回的一律不进（决策引擎不做 I/O，
+// 判不了这些）。范围比较仍然逐维进行 —— 活着不等于罩得住这一次。
+type ActiveLease struct {
+	LeaseID string
+	Scope   scope.Scope
 }
 
 // Input 是一次决策的全部输入。
@@ -175,6 +189,13 @@ type Input struct {
 	// 为空表示这个组合从未被批准过。
 	Learned []Grant
 
+	// Active 是与本次请求相关、且仍然生效的**已签发**授权（Lease）。
+	//
+	// 「允许到任务结束」签的正是这样一条：它不生成记忆，因此在 Learned 里
+	// 找不到。少了这一项，同一会话里下一次同样的调用会被再问一遍人，
+	// 而用户明明已经为这个确切范围点过头了（R-39）。
+	Active []ActiveLease
+
 	// Blockers 是调用方已经发现的阻断情况（本包观察不到的那五种）。
 	Blockers []Blocker
 }
@@ -198,6 +219,11 @@ type Outcome struct {
 	Forbidden Forbidden
 	// MatchedMemoryID 是命中的已学习授权，未命中时为空。
 	MatchedMemoryID string
+	// MatchedLeaseID 是命中的已签发授权，未命中时为空。
+	//
+	// 调用方**必须**复用它而不是另签一条：为同一次请求签出第二条授权，
+	// 等于把一次人工确认换成了两份权限。
+	MatchedLeaseID string
 }
 
 // branch 是七个分支中的一行。
@@ -225,6 +251,23 @@ var branches = []branch{
 	{ReasonIdentityAmbiguous, func(i Input, _ bool) bool {
 		return i.Match.Ambiguous
 	}, VerdictRequireApproval},
+
+	// 已经签发的授权罩得住这一次 —— 放在身份歧义之后、低风险之前。
+	//
+	// **在高风险之后**：高风险永远要人确认，那句话里没有例外分支
+	// （REQ-DECIDE-003、不可协商约束第 3 条）。一条 Lease 是「这一次可以」，
+	// 不是「以后都不必问」，拿它去豁免高风险等于开了第一个例外。
+	//
+	// **在超出已学范围之后**：用户特意收紧过的记忆仍然先说话，方向是多问一次。
+	//
+	// **在身份歧义之后**：身份定不下来时，这次请求的 Scope 里那一维本身就不可信，
+	// 拿它去比对任何授权都是在比一个猜出来的值。
+	//
+	// 仍然要过 automatable 那道门：未确认的 Agent 发起写操作、资源指向不止一个
+	// 目标、身份被标记需要检查 —— 这三件事与「有没有授权」无关，各自照旧拦下。
+	{ReasonActiveLease, func(i Input, automatable bool) bool {
+		return automatable && i.Assessment.Level != risk.LevelHigh && i.matchedLease() != nil
+	}, VerdictAutoAllow},
 
 	{ReasonLowRisk, func(i Input, automatable bool) bool {
 		return automatable && i.Assessment.Level == risk.LevelLow && i.rule().lowRisk(i)
@@ -345,6 +388,23 @@ func (i Input) matchedGrant() *Grant {
 	return nil
 }
 
+// matchedLease 找一条完全罩得住本次请求的已签发授权。
+//
+// 与 matchedGrant 同样用 CoversIgnoringWindow：十个维度里九个逐一比较，
+// 任何一维超出即不算命中。时间窗口不参与 —— 授权到没到期由调用方在装配
+// Active 时判定，这里再判一次就有了第二个答案。
+//
+// 命中不等于这次一定发得出去：真正的计量发生在执行前的那一句 Use 上，
+// 那里会再拒一次已过期或已用满的。多一道判断，方向都是拒绝。
+func (i Input) matchedLease() *ActiveLease {
+	for index := range i.Active {
+		if i.Active[index].Scope.CoversIgnoringWindow(i.Scope.Scope) {
+			return &i.Active[index]
+		}
+	}
+	return nil
+}
+
 // conclude 把结论补齐：确认强度与命中的记忆。
 func (i Input) conclude(verdict Verdict, reason Reason) Outcome {
 	outcome := Outcome{
@@ -354,6 +414,13 @@ func (i Input) conclude(verdict Verdict, reason Reason) Outcome {
 	}
 	if matched := i.matchedGrant(); matched != nil {
 		outcome.MatchedMemoryID = matched.MemoryID
+	}
+	// 只在真的据此放行时才报出来：其余分支上「碰巧有一条 Lease 罩得住」
+	// 不是这次结论的依据，报出去会让调用方以为可以复用它。
+	if reason == ReasonActiveLease {
+		if matched := i.matchedLease(); matched != nil {
+			outcome.MatchedLeaseID = matched.LeaseID
+		}
 	}
 	if verdict != VerdictRequireApproval {
 		return outcome
