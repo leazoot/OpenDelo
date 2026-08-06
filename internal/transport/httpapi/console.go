@@ -56,7 +56,8 @@ func newConsoleHandler(assets fs.FS, sessionToken string, logger *slog.Logger) (
 	document, err := fs.ReadFile(assets, indexFile)
 	if err != nil {
 		return nil, apperr.Wrap(apperr.CodeInvalidConfiguration, err).
-			WithDetail("内嵌的 Console 资源里没有 " + indexFile + "，请先运行 make build 生成 web/dist")
+			WithDetail("内嵌的 Console 资源里没有 " + indexFile +
+				"，请先运行 make web-build 生成 web/embedded/dist")
 	}
 
 	index, err := injectSessionToken(document, sessionToken)

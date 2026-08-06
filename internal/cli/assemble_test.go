@@ -3,6 +3,7 @@ package cli_test
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Runcoor/opendelo/internal/cli"
 	"github.com/Runcoor/opendelo/internal/platform/config"
+	"github.com/Runcoor/opendelo/web"
 )
 
 /*
@@ -115,7 +117,23 @@ func waitFor(t *testing.T, port int) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("Gateway 在 10 秒内没有在 %s 上开始监听", address)
+	t.Fatalf("Gateway 在 10 秒内没有在 %s 上开始监听%s", address, whyItCannotStart())
+}
+
+// whyItCannotStart 在超时信息后面补一句真正的原因，能查出来的话。
+//
+// 「端口上没人监听」是症状，不是原因。裸克隆上最常见的那一种（Console 资源
+// 还没构建，`opendelo start` 因此拒绝启动）会让人先去查端口与超时 ——
+// 2026-08-06 的裸克隆验证里我自己就是这么查的。
+func whyItCannotStart() string {
+	assets, err := web.ConsoleFS()
+	if err != nil {
+		return "：读不到内嵌的 Console 资源（" + err.Error() + "）"
+	}
+	if _, statErr := fs.Stat(assets, "index.html"); statErr != nil {
+		return "：Console 资源还没构建，先跑 make web-build"
+	}
+	return ""
 }
 
 func TestStart_OnAnInitializedDirectory_ServesTheGatewayStatus(t *testing.T) {

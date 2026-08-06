@@ -26,8 +26,13 @@ func TestNew_ConsoleAssetsWithoutIndexHTML_AreRejected(t *testing.T) {
 	if !apperr.Is(err, apperr.CodeInvalidConfiguration) {
 		t.Errorf("错误码为 %v，期望 invalid_configuration", err)
 	}
-	if !strings.Contains(err.Error(), "make build") {
-		t.Errorf("错误信息未提示如何修复：%v", err)
+	// 提示要能照着做：给出的命令与产出目录都必须是真的。此前这里写的是
+	// `make build` 与 `web/dist`，而输出目录早已改成 `web/embedded/dist` ——
+	// 一句照着做不成立的提示，比不给提示更费时间。
+	for _, expected := range []string{"make web-build", "web/embedded/dist"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("错误信息里没有 %q：%v", expected, err)
+		}
 	}
 }
 

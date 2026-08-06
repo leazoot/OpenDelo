@@ -96,7 +96,10 @@ test: ## 运行全部 Go 测试（含竞态检测）
 	go test ./... -race
 
 .PHONY: check
-check: go-check web-check links ## 全部检查：Go（格式/vet/lint/测试）+ 前端（类型/lint/测试/构建）+ 令牌与链接扫描
+# web-build 排在最前面：Go 测试要起真网关，而 `opendelo start` 在 Console 资源
+# 没构建时拒绝启动（web/console.go）。放在 go-check 之后的话，裸克隆上第一次跑
+# 必失败、第二次才过 —— 而 CI 每一次都是第一次。
+check: web-build go-check web-check links ## 全部检查：Console 产物 + Go（格式/vet/lint/测试）+ 前端（类型/lint/测试/构建）+ 令牌与链接扫描
 
 .PHONY: go-check
 go-check: fmt-check vet lint test ## 仅 Go 侧检查
