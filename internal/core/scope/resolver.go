@@ -31,6 +31,17 @@ const DefaultDuration = 15 * time.Minute
 // 需要更多次由审批显式放大（REQ-APPROVAL-002）。
 const DefaultRequestLimit = 1
 
+// TaskRequestLimit 是「允许到任务结束」放大到的请求次数。
+//
+// 不能是「不限」：次数是十个维度之一，Scope 层面没有无上限的写法（scope.go）。
+// 也不能沿用 1 —— 那样「仅允许这一次」与「允许到任务结束」在效果上完全一样，
+// 用户点哪个都只换来一次调用（R-49）。
+//
+// 取 20 是因为一次任务里同一件事重复几遍是常态（重试、翻页、逐条处理），
+// 而 20 之外仍然有两道更硬的边界在管着它：授权绑定本次会话，会话结束当场收回；
+// 到期时刻照旧是 15 分钟。次数在这里是第三道，不是唯一一道。
+const TaskRequestLimit = 20
+
 // InjectionEvent 是 Result.Injection 非空时调用方必须记的审计事件（REQ-SCOPE-002 AC2）。
 const InjectionEvent = audit.EventScopeInjectionIgnored
 

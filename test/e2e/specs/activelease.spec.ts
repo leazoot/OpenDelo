@@ -54,13 +54,12 @@ test('允许到任务结束之后，同一会话里同样的调用不再问人',
   expect(stillWaiting.body.items.filter((item) => item.status === 'pending')).toHaveLength(0)
 
   // **不得另签一条授权**：为同一次请求签出第二条，等于把一次人工确认换成两份权限。
-  //
-  // 断言的是「此刻没有活着的授权」：那条授权的次数上限是 1（`scope.DefaultRequestLimit`），
-  // 第二次调用把它用满了。真要是又签了一条，这里会看到一条崭新的活跃授权。
+  // 「允许到任务结束」的次数上限是 scope.TaskRequestLimit，用掉一次之后它还活着，
+  // 因此这里断言的是「还是原来那一条」。
   expect(
     await activeLeaseIDs(api),
     '据已有授权放行时又签了一条新的 —— 一次确认换出了两份权限',
-  ).toEqual([])
+  ).toEqual(issued)
 
   // 出站那条执行记的必须是**原来那条**授权。
   // 不看 `decision.auto_allowed`：审计先于签发写入（ADR-004），那条记录上的
@@ -76,6 +75,31 @@ test('允许到任务结束之后，同一会话里同样的调用不再问人',
 
   // 只有第二次真的发出去了：第一次停在缝前，什么也没发。
   expect(external.github.received().filter((arrived) => arrived.method === 'POST')).toHaveLength(1)
+})
+
+test('允许到任务结束真的覆盖到任务结束，不是只覆盖一次', async ({ api, agent, external }) => {
+  // R-49：这个选项此前签出的授权次数上限是 1，与「仅允许这一次」毫无区别 ——
+  // 批准之后第二次调用通过、第三次又回到缝前。
+  await connect(api, identity)
+  const session = await agent()
+  await session.confirm()
+
+  expect((await session.call('github.issue.create', { ...repository, title: '第一次' })).refused).toBe(true)
+  await settle(api, await onlyPending(api), 'allow-task')
+
+  for (const round of [2, 3, 4, 5]) {
+    const call = await session.call('github.issue.create', { ...repository, title: `第 ${String(round)} 次` })
+    expect(call.refused, `第 ${String(round)} 次调用又回到了缝前 —— 「到任务结束」只覆盖了一次`).toBe(false)
+  }
+
+  expect(
+    external.github.received().filter((arrived) => arrived.method === 'POST'),
+    '四次调用没有都真的发出去',
+  ).toHaveLength(4)
+
+  // 一次确认仍然只对应一份授权。
+  const listed = await api.get<ListOf<{ id: string; status: string }>>('/v1/leases')
+  expect(listed.body.items).toHaveLength(1)
 })
 
 test('允许到任务结束罩不住另一个资源', async ({ api, agent, external }) => {

@@ -194,9 +194,14 @@ func (p *Pipeline) grant(
 		return nil, err
 	}
 
-	// 「仅允许这一次」把次数上限收紧到 1。这是收紧，不是放宽：
-	// 决策收敛出来的上限只会更大。
-	if settlement.RequestLimit > 0 && settlement.RequestLimit < granted.RequestLimit {
+	// 审批可以显式定下次数上限，收紧与放大都算数（`scope.DefaultRequestLimit`
+	// 的注释：「需要更多次由审批显式放大」）。「仅允许这一次」收紧到 1，
+	// 「允许到任务结束」放大到 TaskRequestLimit —— 后者沿用默认值的话，
+	// 两个选项在效果上完全一样（R-49）。
+	//
+	// 放大的只有次数这一维。其余九维仍然是决策收敛出来的那一份，
+	// 而「到任务结束」那一条另有会话绑定与到期时刻兜着。
+	if settlement.RequestLimit > 0 {
 		granted.RequestLimit = settlement.RequestLimit
 	}
 

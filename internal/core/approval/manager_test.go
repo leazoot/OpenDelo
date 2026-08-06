@@ -295,7 +295,11 @@ func TestSettle_EveryActionHasItsOwnConsequence(t *testing.T) {
 		},
 		{
 			approval.ActionAllowUntilTaskEnd, approval.StatusApproved,
-			approval.Settlement{Allowed: true, SessionBound: true},
+			// 次数显式放大：沿用收敛后的默认值（1）会让这个选项与
+			// 「仅允许这一次」在效果上完全一样（R-49）。
+			approval.Settlement{
+				Allowed: true, SessionBound: true, RequestLimit: scope.TaskRequestLimit,
+			},
 		},
 		{
 			approval.ActionAutoAllowInProject, approval.StatusApproved,

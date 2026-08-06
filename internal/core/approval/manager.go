@@ -6,6 +6,7 @@ import (
 
 	"github.com/Runcoor/opendelo/internal/core/decision"
 	"github.com/Runcoor/opendelo/internal/core/risk"
+	"github.com/Runcoor/opendelo/internal/core/scope"
 	"github.com/Runcoor/opendelo/internal/core/trust"
 	"github.com/Runcoor/opendelo/internal/platform/apperr"
 	"github.com/Runcoor/opendelo/internal/platform/clock"
@@ -159,9 +160,14 @@ type Settlement struct {
 // 写成一张字面上的表：加一个取值就得在这里给出它的后果，
 // 而不是在某个 switch 的 default 里被悄悄当成「允许」。
 var consequences = map[Action]Settlement{
-	ActionDeny:               {Allowed: false},
-	ActionAllowOnce:          {Allowed: true, RequestLimit: 1},
-	ActionAllowUntilTaskEnd:  {Allowed: true, SessionBound: true},
+	ActionDeny:      {Allowed: false},
+	ActionAllowOnce: {Allowed: true, RequestLimit: 1},
+	// 次数显式放大到 TaskRequestLimit：沿用收敛后的默认值（1）会让这个选项
+	// 与「仅允许这一次」在效果上完全一样（R-49）。放大的只有次数这一维，
+	// 其余九维不动，且授权仍然绑定本次会话。
+	ActionAllowUntilTaskEnd: {
+		Allowed: true, SessionBound: true, RequestLimit: scope.TaskRequestLimit,
+	},
 	ActionAutoAllowInProject: {Allowed: true, Learn: trust.BehaviorAutoAllow},
 	ActionAlwaysAsk:          {Allowed: true, Learn: trust.BehaviorAlwaysAsk},
 }

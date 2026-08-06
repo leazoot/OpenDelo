@@ -345,8 +345,13 @@ func TestSettleApproval_AllowOnce_TightensAWiderScopeDownToOneRequest(t *testing
 	}
 }
 
-func TestSettleApproval_AllowUntilTaskEnd_KeepsTheConvergedLimit(t *testing.T) {
-	// 反过来：不是「仅允许这一次」的操作不收紧，收敛出来的上限原样生效。
+func TestSettleApproval_AllowUntilTaskEnd_RaisesTheLimitAboveASingleCall(t *testing.T) {
+	// 原先这条断言的是「收敛出来的上限原样生效」。那个契约有个后果没人注意到：
+	// 收敛出来的默认上限是 1，于是「允许到任务结束」与「仅允许这一次」签出的
+	// 授权一模一样 —— 用户点哪个都只换来一次调用（R-49）。
+	//
+	// 现在审批显式定下次数，收紧与放大都算数（`scope.DefaultRequestLimit` 的
+	// 注释本来就写着「需要更多次由审批显式放大」）。放大的只有次数这一维。
 	all := newHarness(t)
 	item := approvalOn(t, all, wideScope(t, 5))
 
@@ -355,8 +360,36 @@ func TestSettleApproval_AllowUntilTaskEnd_KeepsTheConvergedLimit(t *testing.T) {
 	if result.Lease == nil {
 		t.Fatal("放行之后没有签发 Lease")
 	}
-	if result.Lease.RequestLimit != 5 {
-		t.Errorf("次数上限为 %d，期望沿用收敛出来的 5", result.Lease.RequestLimit)
+	if result.Lease.RequestLimit != scope.TaskRequestLimit {
+		t.Errorf("次数上限为 %d，期望 %d", result.Lease.RequestLimit, scope.TaskRequestLimit)
+	}
+	if !result.Lease.IsSessionBound {
+		// 次数放大之后，会话绑定就是这条授权最硬的那道边界。
+		t.Error("「允许到任务结束」签出的授权没有绑定会话")
+	}
+}
+
+func TestSettleApproval_AllowOnceAndAllowUntilTaskEnd_DifferInEffect(t *testing.T) {
+	// 两个选项摆在用户面前，就得真的不一样。这一条守的是 R-49 本身：
+	// 只要它们签出的授权在次数上相等，那次修复就白做了。
+	once := newHarness(t)
+	onceResult := settle(t, once, pending(t, once).ID, approval.ActionAllowOnce)
+
+	task := newHarness(t)
+	taskResult := settle(t, task, pending(t, task).ID, approval.ActionAllowUntilTaskEnd)
+
+	if onceResult.Lease == nil || taskResult.Lease == nil {
+		t.Fatal("两条路里有一条没有签发授权")
+	}
+	if onceResult.Lease.RequestLimit >= taskResult.Lease.RequestLimit {
+		t.Errorf("「仅允许这一次」给了 %d 次，「允许到任务结束」给了 %d 次 —— 两个选项没有区别",
+			onceResult.Lease.RequestLimit, taskResult.Lease.RequestLimit)
+	}
+	if onceResult.Lease.IsSessionBound {
+		t.Error("「仅允许这一次」不该绑定会话")
+	}
+	if !taskResult.Lease.IsSessionBound {
+		t.Error("「允许到任务结束」必须绑定会话")
 	}
 }
 
