@@ -18,7 +18,7 @@ import (
 // 设备 → 工作区 → Agent → 凭据来源 → 凭据引用 → 身份 → 能力请求 → 决策 → 审批项。
 //
 // 每个用例一份独立的临时数据库，用例之间不共享任何状态。
-func SeededChain(t *testing.T) *store.DB {
+func SeededChain(t testing.TB) *store.DB {
 	t.Helper()
 
 	db := SeededDecisionChain(t)
@@ -31,7 +31,7 @@ func SeededChain(t *testing.T) *store.DB {
 // SeededDecisionChain 与 SeededChain 相同，但**不写审批项** ——
 // 审批生命周期本身的用例要自己创建它，库里先有一条会让「一个决策只有一个审批项」
 // 这条断言测不到真正想测的东西。
-func SeededDecisionChain(t *testing.T) *store.DB {
+func SeededDecisionChain(t testing.TB) *store.DB {
 	t.Helper()
 
 	db := SeededRequestChain(t)
@@ -44,7 +44,7 @@ func SeededDecisionChain(t *testing.T) *store.DB {
 // SeededRequestChain 停在能力请求，**不写决策也不写审批项** ——
 // 决策链路本身的用例要自己产出决策，库里先有一条会撞上
 // 「一个请求只有一个决策」的唯一索引。
-func SeededRequestChain(t *testing.T) *store.DB {
+func SeededRequestChain(t testing.TB) *store.DB {
 	t.Helper()
 
 	db := MigratedDB(t)

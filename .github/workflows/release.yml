@@ -54,8 +54,12 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
+        # The asset name carries no version. `/releases/latest/download/<name>`
+        # only resolves for a name that is stable across releases, and that URL is
+        # the one the README tells people to use. The version is in `--version`
+        # and in the release title.
         run: |
-          NAME="opendelo-${GITHUB_REF_NAME}-${GOOS}-${GOARCH}${{ matrix.ext }}"
+          NAME="opendelo-${GOOS}-${GOARCH}${{ matrix.ext }}"
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
             -o "dist/${NAME}" ./cmd/opendelo
           cd dist && sha256sum "${NAME}" > "${NAME}.sha256"
@@ -63,7 +67,7 @@ jobs:
       - name: Smoke test
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: |
-          BIN="dist/opendelo-${GITHUB_REF_NAME}-linux-amd64"
+          BIN="dist/opendelo-linux-amd64"
           chmod +x "$BIN"
           "./$BIN" --version
 
@@ -97,11 +101,11 @@ jobs:
             ## Install
 
             ```sh
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/opendelo-${{ github.ref_name }}-linux-amd64
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/opendelo-linux-amd64
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/SHA256SUMS
             sha256sum -c SHA256SUMS --ignore-missing
-            chmod +x opendelo-${{ github.ref_name }}-linux-amd64
-            sudo install -m 0755 opendelo-${{ github.ref_name }}-linux-amd64 /usr/local/bin/opendelo
+            chmod +x opendelo-linux-amd64
+            sudo install -m 0755 opendelo-linux-amd64 /usr/local/bin/opendelo
             ```
 
             A statically linked single file with the console embedded. No Go, no

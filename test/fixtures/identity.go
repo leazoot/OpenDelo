@@ -35,7 +35,7 @@ const (
 
 // MigratedDB 在独立的临时目录里开一个已迁移到最新版本的数据库。
 // 每个用例一份，用例之间不共享任何状态。
-func MigratedDB(t *testing.T) *store.DB {
+func MigratedDB(t testing.TB) *store.DB {
 	t.Helper()
 
 	db, err := store.Open(t.Context(), store.Options{Path: filepath.Join(t.TempDir(), store.FileName)})

@@ -59,14 +59,80 @@ jobs:
       - name: Check
         run: make check
 
+      # REQ-NFR-001: each benchmark carries its own budget and fails when it is
+      # exceeded. Runner hardware is slower than a developer machine, which is
+      # the point — the budgets have to hold there too.
+      - name: Performance baselines
+        run: make bench
+
       - name: Build
         run: make build
 
       - name: Vulnerability scan (Go)
         run: make vuln
 
+      # Both pnpm projects, not just the Console. The E2E one downloads and then
+      # runs browsers on the machine doing the checking — an advisory there is
+      # not "test-only". It went 14 minor versions behind precisely because
+      # nothing looked at it (TASK-0731).
       - name: Vulnerability scan (frontend)
-        run: pnpm --dir web audit --audit-level=high
+        run: |
+          pnpm --dir web audit --audit-level=high
+          pnpm --dir test/e2e audit --audit-level=high
 
       - name: Smoke test
         run: ./bin/opendelo --version
+
+  e2e:
+    name: e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            test/e2e/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm --dir web install --frozen-lockfile
+
+      - name: Install E2E dependencies and browser
+        run: make e2e-install
+
+      # The suite talks only to 127.0.0.1: every external service is a local
+      # fake (test/e2e/harness/fakes.ts) and credentials come from a fake op
+      # on PATH. Nothing here reaches the network.
+      - name: End-to-end
+        run: make e2e
+
+      # REQ-NFR-003 names four browsers. Three ship with Playwright; Edge is the
+      # system install, which only makes sense on a throwaway runner. Linux only:
+      # the macOS installer is interactive.
+      - if: matrix.os == 'ubuntu-latest'
+        name: End-to-end (Microsoft Edge)
+        run: make e2e-edge
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: test/e2e/playwright-report
+          retention-days: 7

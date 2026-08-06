@@ -112,7 +112,7 @@ func Memory(options ...MemoryOption) trust.Memory {
 // 全部使用本包的默认主键与默认字段，因此写出的 Agent 与 Registration 夹具描述的是
 // 同一个进程 —— 用它铺底的用例可以直接观察「注册命中已有身份」与「哈希变化后
 // 记忆匹配不到」两条路径。
-func SeedMemoryChain(t *testing.T, db *store.DB, options ...MemoryOption) trust.Memory {
+func SeedMemoryChain(t testing.TB, db *store.DB, options ...MemoryOption) trust.Memory {
 	t.Helper()
 	ctx := t.Context()
 

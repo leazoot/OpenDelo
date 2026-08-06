@@ -55,6 +55,9 @@ type Gateway struct {
 	Memories   *repo.TrustMemories
 	Agents     *repo.Agents
 	Settings   *repo.Settings
+	// Declarations 让用例能直接看库里有哪些服务声明 —— 「连接身份时写了声明吗」
+	// 只能这样问，端点的响应里没有这一项。
+	Declarations *repo.ServiceAdapters
 }
 
 // credentialsOf 装配凭据注册表。
@@ -62,7 +65,7 @@ type Gateway struct {
 // 不登记任何来源：这些用例不取明文，只读引用元数据。真的要探测时，
 // 注册表会因为找不到对应种类的来源而拒绝 —— 那正是 Fail Closed 的表现。
 func credentialsOf(
-	t *testing.T, db *store.DB, fixed *clock.Fixed, leases *repo.Leases,
+	t testing.TB, db *store.DB, fixed *clock.Fixed, leases *repo.Leases,
 ) *credentials.Registry {
 	t.Helper()
 
@@ -80,7 +83,7 @@ func credentialsOf(
 
 // agentService 装配 Agent 认证服务，只为让「确认信任」这个端点能走通。
 func agentService(
-	t *testing.T, db *store.DB, fixed *clock.Fixed, ids *ulid.Generator,
+	t testing.TB, db *store.DB, fixed *clock.Fixed, ids *ulid.Generator,
 ) *agentauth.Service {
 	t.Helper()
 
@@ -98,7 +101,7 @@ func agentService(
 }
 
 func preferenceStore(
-	t *testing.T, db *store.DB, fixed *clock.Fixed, ids *ulid.Generator,
+	t testing.TB, db *store.DB, fixed *clock.Fixed, ids *ulid.Generator,
 ) *settings.Store {
 	t.Helper()
 
@@ -112,7 +115,7 @@ func preferenceStore(
 }
 
 // NewGateway 在一个已写好前置行的临时数据库上装配全部业务组件。
-func NewGateway(t *testing.T) Gateway {
+func NewGateway(t testing.TB) Gateway {
 	t.Helper()
 
 	db := SeededRequestChain(t)
@@ -171,22 +174,31 @@ func NewGateway(t *testing.T) Gateway {
 	}
 
 	credentialRegistry := credentialsOf(t, db, fixed, leases)
-	decide, adapterRegistry := submissionsOf(t, db, line, credentialRegistry, fixed)
+	decide, adapterRegistry, stream := submissionsOf(t, db, line, credentialRegistry, fixed)
+	declarer, err := orchestration.NewDeclarer(orchestration.DeclarerOptions{
+		Registry: adapterRegistry, Declarations: repo.NewServiceAdapters(db),
+		Clock: fixed, IDs: ids,
+	})
+	if err != nil {
+		t.Fatalf("构造服务声明器失败：%v", err)
+	}
 
 	return Gateway{
 		Services: httpapi.Services{
 			Pipeline: line, Submissions: decide, Capabilities: adapterRegistry,
 			Requests: requests, Decisions: decisions,
 			Approvals: approvalManager, Leases: leaseManager, Memories: memories,
-			Identities: identities, Credentials: credentialRegistry,
+			Identities: identities, Credentials: credentialRegistry, Declarer: declarer,
 			Ledger: events, Agents: agents, AgentAuth: sessions,
 			Preferences: preferenceStore(t, db, fixed, ids), Config: config.Default(),
-			Clock: fixed, IDs: ids,
+			Events: stream,
+			Clock:  fixed, IDs: ids,
 		},
 		DB: db, Clock: fixed, Requests: requests, Decisions: decisions,
 		Approvals: approvals, Leases: leases, Events: events,
 		Identities: identities, Memories: repo.NewTrustMemories(db),
 		Agents: agents, Settings: repo.NewSettings(db),
+		Declarations: repo.NewServiceAdapters(db),
 	}
 }
 
@@ -208,11 +220,41 @@ func (healthySource) Fetch(
 }
 
 // NewGatewayWithHealthySource 与 NewGateway 相同，但注册表里有一个永远可用的来源。
-func NewGatewayWithHealthySource(t *testing.T) Gateway {
+func NewGatewayWithHealthySource(t testing.TB) Gateway {
 	t.Helper()
 
 	gateway := NewGateway(t)
 	if err := gateway.Services.Credentials.Register(healthySource{}); err != nil {
+		t.Fatalf("登记凭据来源失败：%v", err)
+	}
+	return gateway
+}
+
+// downSource 是一个登记过、但此刻取不到凭据的来源。
+//
+// 对应真实世界里 `op` 装着却没登录、钥匙串锁着这两种情况：来源在注册表里，
+// Available 却不通。它与「来源根本没登记」是两条不同的路径，都必须走向拒绝。
+type downSource struct{}
+
+func (downSource) Kind() credentials.ProviderKind { return credentials.KindOnePassword }
+
+func (downSource) Available(context.Context) error {
+	return apperr.New(apperr.CodeProviderUnavailable).WithDetail("来源在用例里被设为不可用")
+}
+
+func (downSource) Fetch(
+	context.Context, credentials.Reference,
+) (secret.Value, error) {
+	return secret.Value{}, apperr.New(apperr.CodeProviderUnavailable).
+		WithDetail("来源在用例里被设为不可用")
+}
+
+// NewGatewayWithDownSource 与 NewGateway 相同，但注册表里那个来源探不通。
+func NewGatewayWithDownSource(t testing.TB) Gateway {
+	t.Helper()
+
+	gateway := NewGateway(t)
+	if err := gateway.Services.Credentials.Register(downSource{}); err != nil {
 		t.Fatalf("登记凭据来源失败：%v", err)
 	}
 	return gateway
@@ -225,7 +267,7 @@ const VaultMasterPassword = sentinel.SentinelPassword
 // NewGatewayWithVault 与 NewGateway 相同，另外建好一个已解锁的本地保险库。
 //
 // 保险库文件在 t.TempDir() 里，用例之间完全隔离，绝不碰用户真实数据目录
-func NewGatewayWithVault(t *testing.T) Gateway {
+func NewGatewayWithVault(t testing.TB) Gateway {
 	t.Helper()
 
 	gateway := NewGateway(t)
@@ -247,7 +289,7 @@ func NewGatewayWithVault(t *testing.T) Gateway {
 // NewGatewayWithEmptyVault 装配一个**配置了保险库但文件尚不存在**的 Gateway。
 //
 // 这正是全新安装的处境：REQ-CRED-004 §2 的主密码还没设过。
-func NewGatewayWithEmptyVault(t *testing.T) Gateway {
+func NewGatewayWithEmptyVault(t testing.TB) Gateway {
 	t.Helper()
 
 	gateway := NewGateway(t)
@@ -267,9 +309,9 @@ func NewGatewayWithEmptyVault(t *testing.T) Gateway {
 // 用真实实现而不是桩：`POST /v1/capability-requests` 的用例要证明的正是
 // 「请求落库之后确实进入了决策链路」，而一个桩证明不了这件事。
 func submissionsOf(
-	t *testing.T, db *store.DB, line *pipeline.Pipeline,
+	t testing.TB, db *store.DB, line *pipeline.Pipeline,
 	creds *credentials.Registry, fixed *clock.Fixed,
-) (*orchestration.Submissions, *adapters.Registry) {
+) (*orchestration.Submissions, *adapters.Registry, *httpapi.Broker) {
 	t.Helper()
 
 	gitHub, err := github.New(github.Options{})
@@ -290,17 +332,29 @@ func submissionsOf(
 		t.Fatalf("构造 Exchange 失败：%v", err)
 	}
 
+	// 用真实的到达通知而不是桩：「缝前来了人，开着的 Console 上看得见吗」
+	// 只有真的播一次事件才答得上来。
+	quiet := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	events := httpapi.NewBroker(quiet)
+	announcer, err := httpapi.NewAnnouncer(httpapi.Announcement{
+		Events: events, Capabilities: registry, Clock: fixed, Logger: quiet,
+	})
+	if err != nil {
+		t.Fatalf("构造到达通知失败：%v", err)
+	}
+
 	decide, err := orchestration.New(orchestration.Submissions{
 		Pipeline: line, Identities: repo.NewIdentities(db),
 		Agents: repo.NewAgents(db), Devices: repo.NewDevices(db),
 		Declarations: repo.NewServiceAdapters(db), Registry: registry,
 		Previews: exchange, Requests: repo.NewCapabilityRequests(db),
-		Clock: fixed, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Arrivals: announcer,
+		Clock:    fixed, Logger: quiet,
 	})
 	if err != nil {
 		t.Fatalf("构造请求编排失败：%v", err)
 	}
-	return decide, registry
+	return decide, registry, events
 }
 
 // identityReferences 回答「这个身份用的是哪条凭据引用」。
