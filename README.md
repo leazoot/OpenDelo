@@ -85,8 +85,9 @@ sudo install -m 0755 opendelo-linux-amd64 /usr/local/bin/opendelo
 Builds are published for macOS (arm64/amd64), Linux (arm64/amd64) and Windows.
 Verify against `SHA256SUMS` on the release page.
 
-> The release pipeline is in place but no tag has been cut yet, so the link above
-> will 404 until the first one lands. Build from source in the meantime.
+> The release pipeline is in place and rehearsed, but no version has been published
+> yet, so the link above will 404 until the first one lands. Build from source in the
+> meantime — `make dist` produces the same five binaries locally.
 
 <details>
 <summary>Or build from source — needs Go ≥ 1.25 and pnpm</summary>
@@ -106,16 +107,44 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 make build
 
 ## Quick start
 
+Four steps from a fresh install to an agent acting on your behalf without ever
+holding your token.
+
+**1 — Start the gateway.**
+
 ```sh
-opendelo init     # create config + data dirs, 0700/0600
-opendelo start    # gateway up on 127.0.0.1
+opendelo init     # config + data dirs, 0700/0600
+opendelo start    # three faces up on 127.0.0.1
 ```
 
-Open the console at **http://127.0.0.1:8787**, connect a credential source and an
-identity, then point an agent at the MCP endpoint:
+`init` must run first: `start` will not create a data directory it was not asked for.
+
+**2 — Connect an identity.** Open **http://127.0.0.1:8787** → **Identities** → *Connect*.
+You give OpenDelo a *coordinate*, never a secret: which source (macOS Keychain,
+1Password, or the Local Vault), which item, which field, and which service and account
+the result stands for. The coordinate is resolved once to check it points at something,
+and the value is zeroed immediately — it is not displayed, logged or stored.
+
+**3 — Run an agent through the gateway.**
 
 ```sh
-opendelo run -- claude          # strips known credential env vars from the child
+opendelo run -- claude
+```
+
+`run` strips known credential variables (`GITHUB_TOKEN`, `OPENAI_API_KEY`, …) from the
+child's environment and gives it a session key instead. Point the agent's MCP client at
+`http://127.0.0.1:8789`; the tool list is generated from the adapters you have connected.
+
+**4 — Watch the seam.** Ask the agent to read something — a repository, a DNS record.
+Low risk, inside a resolvable scope: it goes straight through, and the Ledger records
+why. Now ask it to *write* something. The request stops at the seam and the Gate page
+shows it arriving. Press `A` to allow for this task, `⇧A` for just this once, `D` to
+refuse. Choose "from now on, in this project" and the same request stops asking —
+for that resource, that operation, that project, and nothing wider.
+
+That is the whole product: the agent got the capability, you kept the credential.
+
+```sh
 opendelo status                 # ports, version, uptime
 opendelo leases                 # what is currently authorised
 opendelo audit --limit 20       # the ledger
@@ -185,21 +214,25 @@ build-time scan. The ledger is appended locally and never leaves the machine.
 
 ## Project status
 
-**In active development. Not yet released, not yet packaged.**
+**Feature-complete for the first release. Not yet tagged.**
 
 | | |
 |---|---|
-| Done | Core decision engine · persistence · credential sources · adapters · all three faces · the full web console |
-| Next | End-to-end tests and packaging |
-| Known gaps | No tagged release yet · no remote gateway (loopback only, by design for now) · dependency advisories pending an upgrade pass |
+| Done | Core decision engine · persistence · credential sources · adapters · all three faces · the full web console · end-to-end and security acceptance · performance baselines · cross-platform builds |
+| Next | Cutting the first tag |
+| Known gaps | No remote gateway (loopback only, by design for now) · one dependency advisory awaiting a major upgrade |
 
-The decision kernel holds ≥ 85 % line coverage, `go test ./... -race` is green, and
-architecture, sentinel and fail-closed suites run on every check.
+The decision kernel holds ≥ 85 % line coverage. `go test ./... -race` is green;
+architecture, sentinel and fail-closed suites run on every check; the ten success
+criteria run against a real binary on every end-to-end run. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
 ```sh
-make check     # gofmt · vet · golangci-lint · go test -race · typecheck · lint · vitest · build · token & CSP scans
+make check     # gofmt · vet · golangci-lint · go test -race · typecheck · lint · vitest · build · token, CSP, bundle & link scans
+make e2e       # the real binary against local fakes, on Chromium, Firefox and WebKit
+make bench     # the enforced performance budgets
+make dist      # cross-compiled binaries + SHA256SUMS
 make vuln      # govulncheck
 make dev       # run without building
 make help      # every target

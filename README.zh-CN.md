@@ -83,8 +83,8 @@ sudo install -m 0755 opendelo-linux-amd64 /usr/local/bin/opendelo
 发布覆盖 macOS（arm64/amd64）、Linux（arm64/amd64）与 Windows。
 用发布页上的 `SHA256SUMS` 校验。
 
-> 发布流程已就位，但还没打过 tag，上面的链接在第一个版本出来之前是 404。
-> 在那之前请从源码构建。
+> 发布流程已就位并演练过，但还没有发布过版本，上面的链接在第一个版本出来之前是 404。
+> 在那之前从源码构建 —— `make dist` 在本地产出同样的五个二进制。
 
 <details>
 <summary>或者从源码构建 —— 需要 Go ≥ 1.25 与 pnpm</summary>
@@ -104,16 +104,41 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 make build
 
 ## 快速开始
 
+从装完到 Agent 替你做事、而它手里始终没有你的 Token，一共四步。
+
+**1 — 起网关。**
+
 ```sh
 opendelo init     # 建配置与数据目录，权限 0700/0600
-opendelo start    # 网关起在 127.0.0.1
+opendelo start    # 三个接入面起在 127.0.0.1
 ```
 
-在 **http://127.0.0.1:8787** 打开 Console，接一个凭据来源和一个身份，
-然后把 Agent 指向 MCP 端点：
+`init` 必须先跑：`start` 不会替你造一个没让它造的数据目录。
+
+**2 — 连一个身份。** 在 **http://127.0.0.1:8787** 打开 Console → **Identities** → 连接。
+你给的是一个**坐标**，不是密文：哪个来源（钥匙串、1Password 或本地保险库）、
+哪个条目、哪个字段，以及它代表哪个服务的哪个账号。坐标会被解析一次以确认它确实
+指向某样东西，取到的值当场清零 —— 不显示、不记日志、不入库。
+
+**3 — 让 Agent 从网关走。**
 
 ```sh
-opendelo run -- claude          # 启动子进程前清掉已知的凭据环境变量
+opendelo run -- claude
+```
+
+`run` 会把已知的凭据变量（`GITHUB_TOKEN`、`OPENAI_API_KEY` 等）从子进程环境里清掉，
+换成一把会话密钥。把 Agent 的 MCP 客户端指向 `http://127.0.0.1:8789`，
+工具清单由你已连接的 Adapter 生成。
+
+**4 — 看着那条缝。** 让 Agent 读点什么 —— 一个仓库、一条 DNS 记录。低风险、
+范围收敛得出来，它直接穿过去，账本上记着为什么。再让它**写**点什么：请求会停在缝前，
+Gate 页面上看得见它到达。按 `A` 允许到任务结束，`⇧A` 只这一次，`D` 拒绝。
+选「今后在当前项目自动允许」，同样的请求就不再问 —— 只对那个资源、那个操作、
+那个项目，一寸也不多。
+
+这就是这个产品的全部：Agent 拿到了能力，凭据留在你这里。
+
+```sh
 opendelo status                 # 端口、版本、运行时长
 opendelo leases                 # 此刻有哪些授权生效
 opendelo audit --limit 20       # 账本
@@ -181,21 +206,25 @@ Lease 标签贴在缝的内侧。
 
 ## 项目状态
 
-**开发中，尚未发布，也尚未打包。**
+**功能已经完整，尚未打发布 tag。**
 
 | | |
 |---|---|
-| 已完成 | 决策内核 · 持久化 · 凭据来源 · Adapter · 三个接入面 · 完整的 Web Console |
-| 下一步 | 端到端测试与打包 |
-| 已知缺口 | 还没打过发布 tag · 不支持远程 Gateway（当前只监听回环，是有意为之）· 依赖告警待一次独立的升级 |
+| 已完成 | 决策内核 · 持久化 · 凭据来源 · Adapter · 三个接入面 · 完整的 Web Console · 端到端与安全验收 · 性能基线 · 跨平台构建 |
+| 下一步 | 打第一个发布 tag |
+| 已知缺口 | 不支持远程 Gateway（当前只监听回环，是有意为之）· 一条依赖告警要等一次大版本升级 |
 
-决策内核行覆盖率 ≥ 85%，`go test ./... -race` 全绿，
-架构测试、哨兵扫描与 Fail Closed 用例每次检查都跑。
+决策内核行覆盖率 ≥ 85%。`go test ./... -race` 全绿；架构测试、哨兵扫描与
+Fail Closed 用例每次检查都跑；十条成功标准每次端到端运行都对着真实二进制跑一遍。
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 开发
 
 ```sh
-make check     # gofmt · vet · golangci-lint · go test -race · typecheck · lint · vitest · build · 令牌与 CSP 扫描
+make check     # gofmt · vet · golangci-lint · go test -race · typecheck · lint · vitest · build · 令牌、CSP、包体与链接扫描
+make e2e       # 真实二进制 + 本地假服务，跑在 Chromium / Firefox / WebKit 上
+make bench     # 带预算的性能基线
+make dist      # 交叉编译的可分发二进制 + SHA256SUMS
 make vuln      # govulncheck
 make dev       # 不构建直接运行
 make help      # 全部 target
