@@ -1,8 +1,13 @@
 name: CI
 
-# Manual only: the frontend dependency scan below currently fails and a
-# permanently red pipeline reports nothing.
+# Runs on every push and pull request. It was manual-only for a while because
+# the frontend dependency scan failed and a permanently red pipeline reports
+# nothing; those advisories are closed and both pnpm projects are audited now.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
