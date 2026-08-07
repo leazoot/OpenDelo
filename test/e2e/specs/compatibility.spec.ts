@@ -159,3 +159,54 @@ async function pendingApprovals(page: Page): Promise<{ status: string }[]> {
     return body.items.filter((item) => item.status === 'pending')
   })
 }
+
+// ---------------------------------------------------------------- 流式读取
+
+/*
+ * 这个引擎能不能**边收边读**一条还没结束的响应。
+ *
+ * Console 不能用 EventSource（它发不出会话令牌与 X-Requested-By），只能自己读
+ * fetch 的响应体。那条路在某些引擎上是「等整条响应结束才交给你」——
+ * 而事件流永远不会结束，于是一条事件也收不到，界面上缝前永远是空的。
+ *
+ * 这一条与「核心流程」分开：核心流程红的时候，是浏览器读不到、服务端没发出、
+ * 还是页面没渲染，从那条用例上看不出来。这一条只问一件事，答案因此没有歧义。
+ */
+test('事件流能边收边读，不必等整条响应结束', async ({ page, gateway }) => {
+  await openConsole(page, '/gate')
+
+  const probe = await page.evaluate(async (): Promise<Record<string, unknown>> => {
+    const token = document.querySelector<HTMLMetaElement>('meta[name="opendelo-session-token"]')?.content
+    const response = await fetch('/v1/events', {
+      headers: { Authorization: `Bearer ${token ?? ''}`, 'X-Requested-By': 'opendelo-console' },
+    })
+    const body = response.body
+    if (body === null) {
+      return { status: response.status, hasBody: false }
+    }
+
+    const reader = body.getReader()
+    const firstChunk = await Promise.race([
+      reader.read().then((r) => (r.done ? 'stream-closed' : `${String(r.value?.length ?? 0)} bytes`)),
+      new Promise((resolve) => setTimeout(() => resolve('timeout-5s'), 5000)),
+    ])
+    await reader.cancel()
+    return {
+      status: response.status,
+      hasBody: true,
+      contentType: response.headers.get('content-type') ?? '',
+      firstChunk,
+      hasTextDecoderStream: typeof TextDecoderStream !== 'undefined',
+    }
+  })
+
+  // 先打出来：这条用例红的时候，日志里要有足够的东西定位，不用再猜一轮。
+  console.log(`[流式探测] ${gateway.consoleURL} → ${JSON.stringify(probe)}`)
+
+  expect(probe['hasBody'], `响应没有体：${JSON.stringify(probe)}`).toBe(true)
+  expect(
+    probe['firstChunk'],
+    `响应还没结束就该读到第一块数据，实际是 ${JSON.stringify(probe['firstChunk'])} —— ` +
+      `这个引擎不支持增量读取 fetch 的响应体，事件流在它上面永远收不到东西`,
+  ).not.toBe('timeout-5s')
+})
