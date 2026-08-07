@@ -202,6 +202,15 @@ func (e *endpoints) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// **先订阅，再答复。** Console 的做法是「/v1/events 一有响应就认为自己在听了」，
+	// 因此响应到达时订阅必须已经存在，否则那一瞬广播的事件会丢 —— 这条流不做重放。
+	//
+	// 这一点此前是**碰巧**成立的：`WriteHeader` 不落盘，响应头要等下面那次
+	// `Flush` 才出去，而那已经在订阅之后。碰巧成立的性质会在有人调整写法时
+	// 悄悄失效，所以把次序写明，并由 broker_internal_test.go 的用例守住。
+	events, unsubscribe := e.events.Subscribe()
+	defer unsubscribe()
+
 	header := w.Header()
 	header.Set(headerContentType, "text/event-stream; charset=utf-8")
 	header.Set("Cache-Control", "no-store")
@@ -209,18 +218,40 @@ func (e *endpoints) stream(w http.ResponseWriter, r *http.Request) {
 	header.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 
-	events, unsubscribe := e.events.Subscribe()
-	defer unsubscribe()
-
 	// retry 让浏览器在断线后自动重连（REQ-API-002 的「断线可重连」）：
 	// 服务端不做事件重放，Console 重连后重新拉一次 REST 即可对齐。
-	if _, err := w.Write([]byte("retry: " + itoa(retryHint) + "\n\n")); err != nil {
+	if _, err := w.Write(streamPreamble()); err != nil {
 		// 连第一行都写不出去，这条连接已经没了，直接收工。
 		return
 	}
 	flusher.Flush()
 
 	e.pump(r.Context(), w, flusher, events)
+}
+
+// streamPreamble 是连接建立时写出的第一块内容：重连间隔 + 一段填充注释。
+//
+// **填充不是装饰。** 有些浏览器在收到足够字节之前不把已到达的数据交给
+// EventSource，于是第一条事件明明已经写出去并 flush 了，页面上却什么都没有 ——
+// 要等下一次写入（本产品是 20 秒后的心跳）才一起浮出来。安静时段里，
+// 缝前来了人而界面要等 20 秒才显示，等于这条实时流不存在。
+//
+// 2026-08-07 的 CI 上 Linux WebKit 稳定踩中：核心流程用例等 10 秒等不到那张卡片，
+// 而同一份用例在 chromium 与 firefox 上都是绿的。macOS 的 WebKit 是另一个构建，
+// 开发机上因此看不见（那一侧的成因是整帧被拆成多次写，已由 TASK-0735 修掉）。
+//
+// 冒号开头的行是 SSE 的注释，任何合规客户端都会忽略它，代价是一次性的 2KB。
+func streamPreamble() []byte {
+	const padding = 2048
+
+	preamble := make([]byte, 0, padding+64)
+	preamble = append(preamble, "retry: "...)
+	preamble = append(preamble, itoa(retryHint)...)
+	preamble = append(preamble, "\n:"...)
+	for len(preamble) < padding {
+		preamble = append(preamble, ' ')
+	}
+	return append(preamble, "\n\n"...)
 }
 
 // pump 把事件与心跳写出去，直到连接结束。

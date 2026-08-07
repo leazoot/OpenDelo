@@ -106,3 +106,80 @@ func (c *countingWriter) Write(payload []byte) (int, error) {
 	c.writes++
 	return c.ResponseWriter.Write(payload)
 }
+
+// subscriberCount 读一眼此刻登记了几个订阅者。
+func (b *Broker) subscriberCount() int {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return len(b.subscribers)
+}
+
+func TestStream_TheSubscriptionExistsBeforeTheClientSeesTheResponse(t *testing.T) {
+	/*
+	 * 「响应到了」必须已经意味着「我在听了」。
+	 *
+	 * Console 的做法正是等 /v1/events 有响应就认为自己订阅上了，然后才去触发
+	 * 请求。若订阅在写响应头**之后**才建立，这中间广播的事件全部丢失 ——
+	 * 而这条流不做重放，丢了就是永远不出现：缝前长不出那张卡片。
+	 *
+	 * 本机回环上那个窗口是微秒级，因此开发机上一直看不见。2026-08-07 的 CI 上
+	 * Linux WebKit 稳定踩中（`compatibility.spec.ts` 的核心流程）。
+	 *
+	 * 用例检查的是结构而不是时序：响应头一到，订阅数就必须已经是 1。
+	 * 反过来写的话这里读到的是 0 —— 不必等，也不必赌。
+	 */
+	broker := NewBroker(slog.New(slog.DiscardHandler))
+	t.Cleanup(broker.Close)
+
+	endpoints := newEndpoints(
+		Services{Clock: clock.NewFixed(time.Unix(0, 0).UTC())}, broker,
+		slog.New(slog.DiscardHandler),
+	)
+	server := httptest.NewServer(http.HandlerFunc(endpoints.stream))
+	t.Cleanup(server.Close)
+
+	// 跑几轮：一轮碰巧通过说明不了什么，而这条守的正是「不靠运气」。
+	for round := 1; round <= 20; round++ {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, nil)
+		if err != nil {
+			t.Fatalf("构造请求失败：%v", err)
+		}
+		response, err := http.DefaultClient.Do(request) //nolint:bodyclose // 本轮末尾关闭
+		if err != nil {
+			t.Fatalf("第 %d 轮连接失败：%v", round, err)
+		}
+		if got := broker.subscriberCount(); got != 1 {
+			t.Fatalf("第 %d 轮：响应头已经到了，登记的订阅者却有 %d 个 —— "+
+				"这中间广播的事件会全部丢失", round, got)
+		}
+		if closeErr := response.Body.Close(); closeErr != nil {
+			t.Fatalf("关闭响应失败：%v", closeErr)
+		}
+		// 等这一轮注销掉，下一轮才从 0 开始。
+		for waited := 0; broker.subscriberCount() != 0 && waited < 200; waited++ {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
+func TestStreamPreamble_CarriesTheRetryHintAndEnoughPaddingToUnblockTheClient(t *testing.T) {
+	// 填充的用处只在「够不够」上：少了它，有些浏览器要等下一次写入
+	// （20 秒后的心跳）才把第一条事件交给 EventSource。
+	preamble := string(streamPreamble())
+
+	if !strings.HasPrefix(preamble, "retry: ") {
+		t.Errorf("首行不是 retry：%q", preamble[:min(32, len(preamble))])
+	}
+	if len(preamble) < 2048 {
+		t.Errorf("开场白只有 %d 字节 —— 填充不够就等于没填", len(preamble))
+	}
+	if !strings.HasSuffix(preamble, "\n\n") {
+		t.Error("开场白没有以空行收尾，后面的事件会被粘上去")
+	}
+	// 填充必须是 SSE 注释：正文里出现一段 2KB 的空白会被当成事件数据。
+	lines := strings.Split(strings.TrimSuffix(preamble, "\n\n"), "\n")
+	padding := lines[len(lines)-1]
+	if !strings.HasPrefix(padding, ":") {
+		t.Errorf("填充行不是注释，会被客户端当成数据：%q", padding[:min(16, len(padding))])
+	}
+}
