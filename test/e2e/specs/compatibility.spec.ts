@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { test, expect } from '../harness/fixtures.js'
-import { connect, openConsole } from '../harness/prepare.js'
+import { connect, expectArrivalCard, openConsole } from '../harness/prepare.js'
 import type { ListOf } from '../harness/views.js'
 
 /*
@@ -74,7 +74,7 @@ test('核心流程走得通：缝前出现请求、按键放行、授权真的�
   const refused = await session.call('github.issue.create', { ...repository, title: '兼容性' })
   expect(refused.refused).toBe(true)
   const card = page.locator('button[aria-pressed]')
-  await expect(card).toHaveCount(1)
+  await expectArrivalCard(page, api)
 
   // 键盘：选中之后按 A 放行（REQ-APPROVAL-003）。
   await card.first().click()

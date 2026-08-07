@@ -1,5 +1,5 @@
 import { test, expect } from '../harness/fixtures.js'
-import { connect, openConsole } from '../harness/prepare.js'
+import { connect, expectArrivalCard, openConsole } from '../harness/prepare.js'
 import type { ListOf } from '../harness/views.js'
 
 /*
@@ -29,7 +29,7 @@ test('只用鼠标：从缝前一路走到卷宗，并做一个学习类的决�
 
   // 一、点卡片。这一下只负责选中与展开 Inspector。
   const card = page.locator('button[aria-pressed]')
-  await expect(card).toHaveCount(1)
+  await expectArrivalCard(page, api)
   await card.first().click()
   await expect(card.first()).toHaveAttribute('aria-pressed', 'true')
 

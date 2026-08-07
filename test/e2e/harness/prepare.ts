@@ -45,7 +45,70 @@ export async function connect(api: WebAPI, spec: IdentitySpec): Promise<Identity
  * 而机器越忙那个窗口越宽。
  */
 export async function openConsole(page: Page, path: string): Promise<void> {
+  watch(page)
   const streaming = page.waitForResponse((response) => response.url().includes('/v1/events'))
   await page.goto(path)
   await streaming
+}
+
+/*
+ * 缝前那张卡片等不到时，把两边的状态都摆出来。
+ *
+ * 「locator resolved to 0 elements」这一句同时符合好几种故障：网关没收到请求、
+ * 事件没发出去、浏览器没收到、收到了但没渲染。2026-08-07 起为它写了三个修复，
+ * 全部打在错误的一环上 —— 每一轮都要等一次 CI 才知道又错了。
+ *
+ * 所以失败信息里带上：网关那边有没有这条请求、页面开了几条事件流、
+ * 控制台报了什么。答案在日志里，不必再猜一轮。
+ */
+interface PageWatch {
+  streams: string[]
+  problems: string[]
+}
+
+const watched = new WeakMap<Page, PageWatch>()
+
+function watch(page: Page): void {
+  if (watched.has(page)) {
+    return
+  }
+  const record: PageWatch = { streams: [], problems: [] }
+  watched.set(page, record)
+
+  page.on('response', (response) => {
+    if (response.url().includes('/v1/events')) {
+      record.streams.push(`${String(response.status())} ${response.url()}`)
+    }
+  })
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      record.problems.push(`console: ${message.text()}`)
+    }
+  })
+  page.on('pageerror', (error) => {
+    record.problems.push(`pageerror: ${error.message}`)
+  })
+}
+
+/** expectArrivalCard 等缝前长出 count 张卡片，等不到就连着证据一起失败。 */
+export async function expectArrivalCard(page: Page, api: WebAPI, count = 1): Promise<void> {
+  const card = page.locator('button[aria-pressed]')
+  try {
+    await expect(card).toHaveCount(count, { timeout: 10_000 })
+  } catch (failure) {
+    const record = watched.get(page) ?? { streams: [], problems: [] }
+    const listed = await api.get<{ items: { id: string; status: string }[] }>('/v1/capability-requests')
+    const rendered = await page.locator('body').innerText()
+
+    throw new Error(
+      [
+        `缝前没有长出卡片（期望 ${String(count)} 张）。`,
+        `网关侧的能力请求：${JSON.stringify(listed.body.items.map((item) => item.status))}`,
+        `页面开过的事件流：${JSON.stringify(record.streams)}`,
+        `控制台：${JSON.stringify(record.problems)}`,
+        `页面文字：${JSON.stringify(rendered.replace(/\s+/g, ' ').slice(0, 400))}`,
+        String(failure),
+      ].join('\n'),
+    )
+  }
 }
