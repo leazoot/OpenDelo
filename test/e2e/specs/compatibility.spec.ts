@@ -64,7 +64,7 @@ test('五个主页面都渲染得出来，没有脚本错误，也没有横向�
 
 // ---------------------------------------------------------------- 核心流程
 
-test('核心流程走得通：缝前出现请求、按键放行、授权真的生效', async ({ api, agent, page }) => {
+test('核心流程走得通：缝前出现请求、按键放行、授权真的生效', async ({ api, agent, page, gateway }) => {
   await connect(api, { ...gitHubIdentity, accountLabel: 'work' })
   const session = await agent()
 
@@ -74,7 +74,7 @@ test('核心流程走得通：缝前出现请求、按键放行、授权真的�
   const refused = await session.call('github.issue.create', { ...repository, title: '兼容性' })
   expect(refused.refused).toBe(true)
   const card = page.locator('button[aria-pressed]')
-  await expectArrivalCard(page, api)
+  await expectArrivalCard(page, api, 1, gateway.output)
 
   // 键盘：选中之后按 A 放行（REQ-APPROVAL-003）。
   await card.first().click()

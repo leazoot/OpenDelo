@@ -91,7 +91,12 @@ function watch(page: Page): void {
 }
 
 /** expectArrivalCard 等缝前长出 count 张卡片，等不到就连着证据一起失败。 */
-export async function expectArrivalCard(page: Page, api: WebAPI, count = 1): Promise<void> {
+export async function expectArrivalCard(
+  page: Page,
+  api: WebAPI,
+  count = 1,
+  gatewayOutput?: () => string,
+): Promise<void> {
   const card = page.locator('button[aria-pressed]')
   try {
     await expect(card).toHaveCount(count, { timeout: 10_000 })
@@ -110,6 +115,17 @@ export async function expectArrivalCard(page: Page, api: WebAPI, count = 1): Pro
       // 从**页面自己**再问一次网关。用例那一侧问到的是「网关有这条请求」，
       // 而页面上是空的 —— 这两句同时成立时，剩下两种可能：页面连的不是同一个
       // 网关，或者数据到了页面却没进渲染。这一条把它们劈开。
+      [
+        '网关广播了什么',
+        () =>
+          Promise.resolve(
+            (gatewayOutput?.() ?? '(没传网关)')
+              .split('\n')
+              .filter((line) => line.includes('广播') || line.includes('SSE'))
+              .slice(-6)
+              .join(' | ') || '(网关日志里没有任何广播记录)',
+          ),
+      ],
       [
         '页面侧看到的待决项',
         () =>

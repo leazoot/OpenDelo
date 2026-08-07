@@ -90,14 +90,22 @@ func (b *Broker) Publish(event Event) {
 	if b.closed {
 		return
 	}
+	delivered := 0
 	for id, subscriber := range b.subscribers {
 		select {
 		case subscriber <- event:
+			delivered++
 		default:
 			b.logger.Warn("SSE 订阅者跟不上，丢弃一条事件",
 				slog.Int("subscriber", id), slog.String("type", event.Type))
 		}
 	}
+
+	// 记下发给了几个订阅者。「界面上没出现」这句话在服务端有两种完全不同的
+	// 成因 —— 压根没广播出去，和广播了但那一头没显示 —— 而它们的修法在两个
+	// 仓的两端。少了这一行，只能靠猜（2026-08-07 起为此猜错过三次）。
+	b.logger.Debug("广播了一条事件",
+		slog.String("type", event.Type), slog.Int("delivered", delivered))
 }
 
 // Subscribe 登记一个订阅者，返回它的通道与注销函数。
