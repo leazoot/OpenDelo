@@ -37,8 +37,12 @@ help: ## 列出可用 target
 	@echo
 	@echo "工具版本：golangci-lint $(GOLANGCI_LINT_VERSION) · gofumpt $(GOFUMPT_VERSION) · govulncheck $(GOVULNCHECK_VERSION) · sqlc $(SQLC_VERSION)"
 
+# sqlc **不在** tools 里：它要编译 pg_query 的 C 代码，而那份代码在 macOS 26 的
+# SDK 上编不过（`strchrnul` 在 SDK 里已是非 static 声明，与它的 static 声明冲突）。
+# 其余三个工具都是纯 Go，装在哪台机器上都一样。
+# 需要 sqlc 的只有 generate 与 generate-check，两者各自把它列为前置。
 .PHONY: tools
-tools: $(GOLANGCI_LINT) $(GOFUMPT) $(GOVULNCHECK) $(SQLC) ## 安装固定版本的检查工具到 .bin/
+tools: $(GOLANGCI_LINT) $(GOFUMPT) $(GOVULNCHECK) ## 安装固定版本的检查工具到 .bin/
 
 $(GOLANGCI_LINT):
 	GOBIN=$(LOCAL_BIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)

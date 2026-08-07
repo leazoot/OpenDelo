@@ -58,7 +58,11 @@ jobs:
         run: pnpm --dir web install --frozen-lockfile
 
       # Before the tests: stale generated code would let them pass against it.
+      # Linux only: sqlc compiles pg_query's C sources, which do not build on the
+      # macOS 26 SDK. Whether the committed output matches the SQL does not vary
+      # by platform, so checking it once per push is the whole of the property.
       - name: Verify sqlc output is current
+        if: runner.os == 'Linux'
         run: make generate-check
 
       - name: Check
