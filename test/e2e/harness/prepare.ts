@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test'
 import type { WebAPI } from './api.js'
-import type { IdentityView } from './views.js'
+import type { IdentityView, ListOf } from './views.js'
 
 /*
  * 用例开跑前要摆好的前置状态。
@@ -96,19 +96,35 @@ export async function expectArrivalCard(page: Page, api: WebAPI, count = 1): Pro
   try {
     await expect(card).toHaveCount(count, { timeout: 10_000 })
   } catch (failure) {
-    const record = watched.get(page) ?? { streams: [], problems: [] }
-    const listed = await api.get<{ items: { id: string; status: string }[] }>('/v1/capability-requests')
-    const rendered = await page.locator('body').innerText()
+    // 诊断自己**不能**抛。它一抛，真正的失败就被换成了一句无关的错，
+    // 而那正是 2026-08-07 那一轮 CI 上发生的事：/v1/capability-requests 没有
+    // 列表端点，取 items 时崩掉，四种可能的故障一种也没查出来。
+    const notes: string[] = []
+    for (const [what, gather] of [
+      ['缝前的待决项', async () => JSON.stringify(
+          (await api.get<ListOf<ApprovalLike>>('/v1/approvals')).body.items.map(
+            (item) => `${item.id}:${item.status}`,
+          ),
+        )],
+      ['页面开过的事件流', () => Promise.resolve(JSON.stringify(watched.get(page)?.streams ?? []))],
+      ['控制台', () => Promise.resolve(JSON.stringify(watched.get(page)?.problems ?? []))],
+      ['页面文字', async () => (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 400)],
+    ] as const) {
+      try {
+        notes.push(`${what}：${await gather()}`)
+      } catch (cause) {
+        notes.push(`${what}：取不到（${String(cause)}）`)
+      }
+    }
 
     throw new Error(
-      [
-        `缝前没有长出卡片（期望 ${String(count)} 张）。`,
-        `网关侧的能力请求：${JSON.stringify(listed.body.items.map((item) => item.status))}`,
-        `页面开过的事件流：${JSON.stringify(record.streams)}`,
-        `控制台：${JSON.stringify(record.problems)}`,
-        `页面文字：${JSON.stringify(rendered.replace(/\s+/g, ' ').slice(0, 400))}`,
-        String(failure),
-      ].join('\n'),
+      [`缝前没有长出卡片（期望 ${String(count)} 张）。`, ...notes, String(failure)].join('\n'),
     )
   }
+}
+
+/** ApprovalLike 只取诊断要看的那几项，避免与视图类型互相牵扯。 */
+interface ApprovalLike {
+  readonly id: string
+  readonly status: string
 }
