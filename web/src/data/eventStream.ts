@@ -94,18 +94,28 @@ export async function subscribeToEvents(options: SubscribeOptions): Promise<void
   const response = await sendGateway('/v1/events', request)
   const body = response.body
   if (body === null) {
-    return
+    // 静默返回等于「订阅上了但什么都收不到」，而调用方无从分辨。
+    // 这条流是缝前那张卡片的唯一来源，收不到就要说出来（不静默降级）。
+    throw new Error('事件流没有响应体，这条连接读不出任何事件')
   }
 
   const parse = createEventParser()
-  const reader = body.pipeThrough(new TextDecoderStream()).getReader()
+  // **自己解码，不用 TextDecoderStream。** 后者要经 `pipeThrough` 接在 fetch 的
+  // 响应体上，而 WebKit 那一族对它的支持最弱：2026-08-07 的 CI 上 Linux WebKit
+  // 一条事件都收不到（chromium 与 firefox 同一份用例全绿），服务端怎么改都没用 ——
+  // 因为流从来没有被读到过。`TextDecoder` 是老得多、也普遍得多的那一个。
+  //
+  // `stream: true` 是必需的：一个多字节字符会被切在两个 chunk 之间，
+  // 逐块独立解码会把它变成两个替换字符。
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
   try {
     for (;;) {
       const { done, value } = await reader.read()
       if (done) {
         return
       }
-      for (const event of parse(value)) {
+      for (const event of parse(decoder.decode(value, { stream: true }))) {
         options.onEvent(event)
       }
     }

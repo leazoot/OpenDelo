@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { createEventParser } from './eventStream'
+import { createEventParser, subscribeToEvents } from './eventStream'
 
 /*
  * SSE 的解析（REQ-API-002 AC2）。
@@ -57,5 +57,83 @@ describe('事件流的解析', () => {
       const events = parse(`data: ${JSON.stringify({ type, data: {}, at: 'now' })}\n\n`)
       expect(events[0]?.type, type).toBe(type)
     }
+  })
+})
+
+/*
+ * 读流这一段（2026-08-07 的 CI 上撞出来的）。
+ *
+ * 此前用的是 `body.pipeThrough(new TextDecoderStream())`。Linux WebKit 上
+ * 一条事件都收不到，而 chromium 与 firefox 同一份用例全绿 —— 服务端怎么改都没用，
+ * 因为流从来没被读到过。这里的用例把那个环境造出来：没有 TextDecoderStream。
+ */
+describe('订阅事件流', () => {
+  const chunks = (...parts: string[]): ReadableStream<Uint8Array> => {
+    const encoder = new TextEncoder()
+    return new ReadableStream({
+      start(controller) {
+        for (const part of parts) {
+          controller.enqueue(encoder.encode(part))
+        }
+        controller.close()
+      },
+    })
+  }
+
+  const collect = async (stream: ReadableStream<Uint8Array>): Promise<string[]> => {
+    const seen: string[] = []
+    await subscribeToEvents({
+      signal: new AbortController().signal,
+      token: 'session-token',
+      fetchImpl: () =>
+        Promise.resolve(
+          new Response(stream, {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' },
+          }),
+        ),
+      onEvent: (event) => seen.push(event.type),
+    })
+    return seen
+  }
+
+  it('不依赖 TextDecoderStream —— 拿掉它照样读得出事件', async () => {
+    const original = globalThis.TextDecoderStream
+    // @ts-expect-error 造一个没有它的运行环境，这正是 WebKit 那一侧的形状。
+    delete globalThis.TextDecoderStream
+    try {
+      expect(await collect(chunks(arrival('01JA'), arrival('01JB')))).toEqual(['arrival', 'arrival'])
+    } finally {
+      globalThis.TextDecoderStream = original
+    }
+  })
+
+  it('一个多字节字符被切在两个 chunk 之间也解得出来', async () => {
+    // 逐块独立解码会把它变成替换字符，事件体随之解析失败。
+    const whole = new TextEncoder().encode(
+      `event: arrival\ndata: ${JSON.stringify({ type: 'arrival', data: { id: '缝前' }, at: '2026-07-29T00:00:00Z' })}\n\n`,
+    )
+    const cut = Math.floor(whole.length / 2)
+    const split = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(whole.slice(0, cut))
+        controller.enqueue(whole.slice(cut))
+        controller.close()
+      },
+    })
+
+    expect(await collect(split)).toEqual(['arrival'])
+  })
+
+  it('响应没有体时说出来，不装作订阅成功', async () => {
+    // 静默返回等于「订阅上了但什么都收不到」，而调用方无从分辨。
+    await expect(
+      subscribeToEvents({
+        signal: new AbortController().signal,
+        token: 'session-token',
+        fetchImpl: () => Promise.resolve(new Response(null, { status: 200 })),
+        onEvent: () => undefined,
+      }),
+    ).rejects.toThrow(/响应体/)
   })
 })

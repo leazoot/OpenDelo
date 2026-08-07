@@ -112,6 +112,7 @@ const NOT_TRANSLATED = new Map<string, string>([
   ['src/pages/preferences/PreferencesPage.tsx', '语言选项上的「中」是这门语言的自称，英文界面里也写作「中」'],
   ['src/data/gateway.ts', '抛出的诊断信息，界面从不渲染 error.message'],
   ['src/data/ledger.ts', '抛出的诊断信息，界面从不渲染 error.message'],
+  ['src/data/eventStream.ts', '抛出的诊断信息，界面从不渲染 error.message'],
 ])
 
 describe('界面上的中文都来自字典', () => {

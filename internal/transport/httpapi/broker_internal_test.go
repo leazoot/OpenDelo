@@ -161,25 +161,3 @@ func TestStream_TheSubscriptionExistsBeforeTheClientSeesTheResponse(t *testing.T
 		}
 	}
 }
-
-func TestStreamPreamble_CarriesTheRetryHintAndEnoughPaddingToUnblockTheClient(t *testing.T) {
-	// 填充的用处只在「够不够」上：少了它，有些浏览器要等下一次写入
-	// （20 秒后的心跳）才把第一条事件交给 EventSource。
-	preamble := string(streamPreamble())
-
-	if !strings.HasPrefix(preamble, "retry: ") {
-		t.Errorf("首行不是 retry：%q", preamble[:min(32, len(preamble))])
-	}
-	if len(preamble) < 2048 {
-		t.Errorf("开场白只有 %d 字节 —— 填充不够就等于没填", len(preamble))
-	}
-	if !strings.HasSuffix(preamble, "\n\n") {
-		t.Error("开场白没有以空行收尾，后面的事件会被粘上去")
-	}
-	// 填充必须是 SSE 注释：正文里出现一段 2KB 的空白会被当成事件数据。
-	lines := strings.Split(strings.TrimSuffix(preamble, "\n\n"), "\n")
-	padding := lines[len(lines)-1]
-	if !strings.HasPrefix(padding, ":") {
-		t.Errorf("填充行不是注释，会被客户端当成数据：%q", padding[:min(16, len(padding))])
-	}
-}
