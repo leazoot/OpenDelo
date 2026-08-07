@@ -107,6 +107,25 @@ export async function expectArrivalCard(page: Page, api: WebAPI, count = 1): Pro
           ),
         )],
       ['页面开过的事件流', () => Promise.resolve(JSON.stringify(watched.get(page)?.streams ?? []))],
+      // 从**页面自己**再问一次网关。用例那一侧问到的是「网关有这条请求」，
+      // 而页面上是空的 —— 这两句同时成立时，剩下两种可能：页面连的不是同一个
+      // 网关，或者数据到了页面却没进渲染。这一条把它们劈开。
+      [
+        '页面侧看到的待决项',
+        () =>
+          page.evaluate(async () => {
+            const token = document.querySelector<HTMLMetaElement>(
+              'meta[name="opendelo-session-token"]',
+            )?.content
+            const answer = await fetch('/v1/approvals', {
+              headers: { Authorization: `Bearer ${token ?? ''}`, 'X-Requested-By': 'opendelo-console' },
+            })
+            const payload = (await answer.json()) as { items?: { id: string; status: string }[] }
+            return `${String(answer.status)} ${JSON.stringify(
+              (payload.items ?? []).map((item) => `${item.id}:${item.status}`),
+            )}`
+          }),
+      ],
       ['控制台', () => Promise.resolve(JSON.stringify(watched.get(page)?.problems ?? []))],
       ['页面文字', async () => (await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 400)],
     ] as const) {

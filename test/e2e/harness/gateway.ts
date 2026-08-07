@@ -62,8 +62,34 @@ export interface GatewayOptions {
   readonly logLevel?: string
 }
 
-/** startGateway 建好隔离目录并启动进程，直到三个面都在服务后才返回。 */
+/*
+ * startGateway 建好隔离目录并启动进程，直到三个面都在服务后才返回。
+ *
+ * 端口撞了就重来。分配是「先占住、再放掉、然后启动」——`ports.ts` 的注释写着
+ * 释放与启动之间那个窗口消不掉，而 CI 上并行跑的时候它会被撞中：
+ * 2026-08-07 有一轮就是 `bind: address already in use`（agent-proxy）。
+ * 撞中是小概率且完全无害的，重来一次即可；把它当成失败会让一整轮 CI 白跑，
+ * 而那一轮里真正的问题就被这条噪声盖住了。
+ */
 export async function startGateway(options: GatewayOptions): Promise<Gateway> {
+  const attempts = 5
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await startOnce(options)
+    } catch (cause) {
+      if (attempt >= attempts || !isPortCollision(cause)) {
+        throw cause
+      }
+    }
+  }
+}
+
+/** isPortCollision 认出「端口被别人占了」这一种失败，其余一律照原样抛出。 */
+function isPortCollision(cause: unknown): boolean {
+  return /address already in use|EADDRINUSE/.test(String(cause))
+}
+
+async function startOnce(options: GatewayOptions): Promise<Gateway> {
   await assertBinaryBuilt()
 
   // 假 op 与配置目录分开放。放在一起的话哨兵扫描会在「数据目录」这一面上
