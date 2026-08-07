@@ -10,6 +10,8 @@ refactors appear only when they change a guarantee, a command, or a file on disk
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-08-08
+
 ### Added
 
 - **End-to-end suite.** Every one of the ten success criteria in the PRD runs against
@@ -54,6 +56,27 @@ refactors appear only when they change a guarantee, a command, or a file on disk
 - **Learned authorisations stopped working after a second account was connected.**
   Trust memories were loaded after identity matching instead of before, so they never
   had a chance to say which identity this project had been using.
+- **A request could arrive at an open console and never appear.** Opening the gate
+  starts a fetch of the list; a request that arrived while that fetch was still out
+  was written into the cache by the push and then overwritten when the fetch landed
+  carrying the list as it had been. Nothing fetched again, so the seam kept saying no
+  one was waiting while the gateway held the request. Slower machines lost it more
+  often; on a fast one it was invisible.
+- **"Allow until the task ends" granted exactly one call.** It inherited the default
+  request count of one, which is what "allow just this once" grants, so the second
+  call landed back at the seam. The approval now sets the count explicitly; the lease
+  is still bound to the session and still expires on its own.
+- **An approval no longer answered a later identical call.** The decision chain read
+  only learned rules, never the authorisation it had just issued, so the same request
+  asked again in the same session. High-risk operations are excluded: that they always
+  need a person has no exception.
+- **A request forwarded through the proxy left no trace of having been executed.**
+  Only the MCP face recorded an execution; the proxy left an access log, and a log is
+  not an audit. Both faces now record the same event, and the ledger carries the
+  status the external service actually answered rather than the 200/502 the agent sees.
+- **The ledger's spine ran through the agent names.** Browsers indent lists by 40px
+  and the reset never cleared it, so every row sat 40px right of the spine drawn
+  behind them.
 - **Ctrl-C reported a failure whenever the console was open.** A subscribed event
   stream held the graceful shutdown for its full grace period and the process exited
   with status 1. Shutdown now closes the stream first, and a grace that runs out
@@ -62,9 +85,13 @@ refactors appear only when they change a guarantee, a command, or a file on disk
 
 ### Security
 
-- `react-router` 7.9.6 → 7.18.2, closing seven high and six moderate advisories.
-  One high advisory remains; it requires the 8.x major upgrade and is tracked
-  separately.
+- `react-router` 7.9.6 → 8.3.0 and Playwright 1.48.2 → 1.62.1, closing every known
+  high advisory in both pnpm projects. The end-to-end project had never been audited
+  at all, and had drifted fourteen minor versions behind while shipping an advisory
+  about downloading browsers without verifying certificates.
+- An agent asking for a credential is judged in one place again. The MCP face kept a
+  second keyword list of its own, which missed `read_api_key`, `read_private_key`,
+  `read_passphrase` and `read_keychain_item` entirely.
 
 ## [0.1.0-rc.3] — 2026-07-31
 
@@ -74,6 +101,7 @@ Release-pipeline rehearsal. No user-facing change beyond the Windows path fix ab
 
 First rehearsal of the release pipeline.
 
-[Unreleased]: https://github.com/leazoot/OpenDelo/compare/v0.1.0-rc.3...HEAD
+[Unreleased]: https://github.com/leazoot/OpenDelo/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/leazoot/OpenDelo/compare/v0.1.0-rc.3...v0.1.0
 [0.1.0-rc.3]: https://github.com/leazoot/OpenDelo/compare/v0.1.0-rc.2...v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/leazoot/OpenDelo/releases/tag/v0.1.0-rc.2
