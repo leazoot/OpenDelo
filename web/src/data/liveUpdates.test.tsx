@@ -133,3 +133,39 @@ describe('订阅与重连', () => {
     expect(attempts).toBeLessThanOrEqual(settled + 1)
   })
 })
+
+describe('推送与正在飞行的那次拉取', () => {
+  /*
+   * 2026-08-07 起 CI 上反复红的那一条：缝前来了请求，界面却始终写着「缝前无人等待」。
+   *
+   * 页面一打开会拉一次列表；那一次还没回来时，SSE 把新到的请求写进了缓存，
+   * 随后那次拉取带着**旧的空列表**落地，把它盖掉。之后没有人再拉一次，
+   * 于是那张卡片再也不会出现 —— 界面停在「无人等待」，而网关那边它明明在等。
+   *
+   * 本机上这个窗口是毫秒级，CI 上够宽。用一次不会自己结束的拉取把它固定下来。
+   */
+  it('拉取还在飞的时候来了推送，落地的旧结果不得把它盖掉', async () => {
+    const client = createQueryClient()
+    let land: (items: Passage[]) => void = () => undefined
+    const inFlight = new Promise<Passage[]>((resolve) => {
+      land = resolve
+    })
+
+    // 这一次拉取永远不结束，直到用例放它走 —— 正是页面刚打开的那一瞬。
+    const fetching = client.fetchQuery({ queryKey: PASSAGES_KEY, queryFn: () => inFlight })
+
+    applyEvent(client, event('arrival', requestPayload('req-flight', null)))
+
+    // 旧的空列表现在才回来。
+    land([])
+    await fetching.catch(() => undefined)
+
+    await waitFor(() => {
+      const passages = client.getQueryData<Passage[]>(PASSAGES_KEY) ?? []
+      expect(
+        passages.map((passage) => passage.id),
+        '缝前那条请求被一次早就发出去的空拉取盖掉了',
+      ).toEqual(['req-flight'])
+    })
+  })
+})

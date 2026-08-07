@@ -50,6 +50,13 @@ export function applyEvent(client: QueryClient, event: GatewayEvent): void {
       if (passage === null) {
         return
       }
+      // **先取消正在飞的那次拉取。** 页面刚打开时列表拉取还没回来，这时写进
+      // 缓存的推送会被随后落地的那份旧结果盖掉 —— 而之后没有人再拉一次，
+      // 于是缝前那条请求再也不会出现，界面停在「无人等待」。
+      //
+      // 本机上这个窗口是毫秒级，CI 上够宽：2026-08-07 起它在那里反复红，
+      // 而同一份用例在开发机上一直是绿的。
+      void client.cancelQueries({ queryKey: PASSAGES_KEY })
       client.setQueryData<Passage[]>(PASSAGES_KEY, (existing) => mergePassage(existing ?? [], passage))
       return
     }
