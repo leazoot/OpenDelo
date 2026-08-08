@@ -163,19 +163,29 @@ async function pendingApprovals(page: Page): Promise<{ status: string }[]> {
 // ---------------------------------------------------------------- 流式读取
 
 /*
- * 这个引擎能不能**边收边读**一条还没结束的响应。
+ * 这个引擎能不能**边收边读**一条还没结束的响应，而且一整条事件当场读得完。
  *
  * Console 不能用 EventSource（它发不出会话令牌与 X-Requested-By），只能自己读
- * fetch 的响应体。那条路在某些引擎上是「等整条响应结束才交给你」——
- * 而事件流永远不会结束，于是一条事件也收不到，界面上缝前永远是空的。
+ * fetch 的响应体。那条路上有两种坏法，症状一模一样（缝前永远是空的）：
  *
- * 这一条与「核心流程」分开：核心流程红的时候，是浏览器读不到、服务端没发出、
- * 还是页面没渲染，从那条用例上看不出来。这一条只问一件事，答案因此没有歧义。
+ *   · 引擎要等整条响应结束才交给你 —— 而事件流永远不会结束；
+ *   · 引擎只交出一次写入的开头，尾巴要等这条连接上过一会儿又有数据。
+ *     Linux 的 WebKit 就是这样：一条 2897 字节的 arrival 只到 123 字节，
+ *     剩下的要等二十秒后的心跳（2026-08-08 实测，修法见 events.go 的 nudge）。
+ *
+ * 因此这一条读到**一整帧**为止，而不是读到第一块就算数 —— 只读第一块的话，
+ * 上面第二种坏法会让它照样通过，而那正是它此前一周里做的事。
+ *
+ * 与「核心流程」分开：核心流程红的时候，是浏览器读不到、服务端没发出、
+ * 还是页面没渲染，从那条用例上看不出来。这一条只问传输，答案没有歧义。
  */
-test('事件流能边收边读，不必等整条响应结束', async ({ page, gateway }) => {
+test('事件流能边收边读，一整条事件当场读得完', async ({ api, agent, page, gateway }) => {
+  await connect(api, { ...gitHubIdentity, accountLabel: 'stream' })
+  const session = await agent()
   await openConsole(page, '/gate')
 
-  const probe = await page.evaluate(async (): Promise<Record<string, unknown>> => {
+  // 先把流开起来，再去触发事件：这条流不做重放，反过来的话事件发生在订阅之前。
+  const opened = await page.evaluate(async () => {
     const token = document.querySelector<HTMLMetaElement>('meta[name="opendelo-session-token"]')?.content
     const response = await fetch('/v1/events', {
       headers: { Authorization: `Bearer ${token ?? ''}`, 'X-Requested-By': 'opendelo-console' },
@@ -184,29 +194,53 @@ test('事件流能边收边读，不必等整条响应结束', async ({ page, ga
     if (body === null) {
       return { status: response.status, hasBody: false }
     }
-
-    const reader = body.getReader()
-    const firstChunk = await Promise.race([
-      reader.read().then((r) => (r.done ? 'stream-closed' : `${String(r.value?.length ?? 0)} bytes`)),
-      new Promise((resolve) => setTimeout(() => resolve('timeout-5s'), 5000)),
-    ])
-    await reader.cancel()
+    Object.assign(window, { __stream: { reader: body.getReader(), decoder: new TextDecoder() } })
     return {
       status: response.status,
       hasBody: true,
       contentType: response.headers.get('content-type') ?? '',
-      firstChunk,
-      hasTextDecoderStream: typeof TextDecoderStream !== 'undefined',
     }
   })
+  expect(opened.hasBody, `响应没有体：${JSON.stringify(opened)}`).toBe(true)
 
-  // 先打出来：这条用例红的时候，日志里要有足够的东西定位，不用再猜一轮。
-  console.log(`[流式探测] ${gateway.consoleURL} → ${JSON.stringify(probe)}`)
+  // 心跳在二十秒后。预算取八秒：靠心跳才凑齐的一帧不算「当场读得完」。
+  const reading = page.evaluate(async () => {
+    const stream = (window as unknown as {
+      __stream: { reader: ReadableStreamDefaultReader<Uint8Array>; decoder: TextDecoder }
+    }).__stream
+    const chunks: number[] = []
+    let text = ''
+    const deadline = Date.now() + 8_000
+    while (Date.now() < deadline && !/data: .*\n\n/.test(text)) {
+      const got = await Promise.race([
+        stream.reader.read(),
+        new Promise<null>((resolve) => setTimeout(() => { resolve(null) }, Math.max(1, deadline - Date.now()))),
+      ])
+      if (got === null || got.done || got.value === undefined) {
+        break
+      }
+      chunks.push(got.value.length)
+      text += stream.decoder.decode(got.value, { stream: true })
+    }
+    await stream.reader.cancel()
+    return { chunks, text }
+  })
 
-  expect(probe['hasBody'], `响应没有体：${JSON.stringify(probe)}`).toBe(true)
+  const refused = await session.call('github.issue.create', { ...repository, title: '流式探测' })
+  expect(refused.refused).toBe(true)
+  const probe = await reading
+
+  // 先打出来：这条红的时候，日志里要有足够的东西定位，不用再猜一轮。
+  console.log(`[流式探测] ${gateway.consoleURL} → ${JSON.stringify(probe.chunks)}`)
+
+  const frame = /data: (.*)\n\n/.exec(probe.text)
   expect(
-    probe['firstChunk'],
-    `响应还没结束就该读到第一块数据，实际是 ${JSON.stringify(probe['firstChunk'])} —— ` +
-      `这个引擎不支持增量读取 fetch 的响应体，事件流在它上面永远收不到东西`,
-  ).not.toBe('timeout-5s')
+    frame,
+    `八秒之内没有读到一整条事件。收到的块：${JSON.stringify(probe.chunks)}，` +
+      `共 ${String(probe.text.length)} 字节，末尾：${JSON.stringify(probe.text.slice(-60))} —— ` +
+      `半条事件既解析不出来也不报错，界面上就是「缝前无人等待」`,
+  ).not.toBeNull()
+
+  const event = JSON.parse(frame?.[1] ?? '{}') as { type?: string }
+  expect(event.type, `读到的这一帧不是到达事件：${JSON.stringify(probe.text.slice(0, 80))}`).toBe('arrival')
 })

@@ -74,6 +74,14 @@ refactors appear only when they change a guarantee, a command, or a file on disk
   Only the MCP face recorded an execution; the proxy left an access log, and a log is
   not an audit. Both faces now record the same event, and the ledger carries the
   status the external service actually answered rather than the 200/502 the agent sees.
+- **A request could take twenty seconds to appear at the seam on WebKit.** The gateway
+  writes each event in a single call, and the WebKit build in our browser matrix hands
+  the page only the beginning of a large write — a 2 897-byte arrival arrived as its
+  first 123 bytes — withholding the rest until more traffic reaches the connection.
+  On a quiet stream that is the twenty-second heartbeat. Until then the console held
+  half a JSON document: nothing to parse, nothing to report, and a seam that said no
+  one was waiting. Each event is now followed by a short comment frame that carries
+  the tail out.
 - **The ledger's spine ran through the agent names.** Browsers indent lists by 40px
   and the reset never cleared it, so every row sat 40px right of the spine drawn
   behind them.

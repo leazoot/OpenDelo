@@ -49,7 +49,28 @@ const (
 	subscriberBuffer = 32
 	// retryHint 告诉浏览器断线后多久重连（SSE 的 retry 字段，单位毫秒）。
 	retryHint = 2000
+	// nudgeDelay 是一条事件与它后面那个空注释帧之间的间隔（见 nudge）。
+	//
+	// **这段间隔是修复的一部分，不是随手取的值。** 紧挨着写第二帧无效（实测），
+	// 隔开之后有效。取 50ms：肉眼看不出，也远小于 REQ-NFR-001 给
+	// 「审批到达 Console」留的预算。
+	nudgeDelay = 50 * time.Millisecond
 )
+
+// nudge 是每条事件之后补发的一个空注释帧。
+//
+// **不是可有可无的礼貌。** Linux 上的 WebKit 收到一次较大的写入时，只把开头交给
+// 页面（实测：一条 2897 字节的 arrival 帧只交出前 123 字节），剩下的 2774 字节
+// 一直不交，直到这条连接上**过一会儿又有数据**。事件流平时是安静的，那就是
+// 二十秒后的心跳 —— 于是缝前那张卡片迟到二十秒，而在此之前 Console 手里是
+// 半条 JSON：解析不出来，也没有任何错误，界面上只是一直写着「缝前无人等待」。
+//
+// 补一帧三个字节把尾巴带出来。以 `:` 开头的行在 SSE 里是注释，任何客户端都会
+// 忽略它。chromium 与 firefox 一次就交出整帧，这一帧对它们只是三个字节的噪声。
+//
+// 2026-08-08 在 Playwright 1.62 的 Linux WebKit 上实测；macOS 上的 WebKit
+// 没有这个行为，所以开发机上一直看不见（CI 在那之前红了一周）。
+var nudge = []byte(":\n\n")
 
 // Event 是推送给 Console 的一条事件。
 //
@@ -244,8 +265,17 @@ func (e *endpoints) pump(
 	heartbeat := time.NewTicker(heartbeatInterval)
 	defer heartbeat.Stop()
 
+	// 上一条事件的尾巴什么时候补。没有待补的尾巴时是 nil，nil 通道永不就绪。
+	var tail <-chan time.Time
+
 	for {
 		select {
+		case <-tail:
+			tail = nil
+			if _, err := w.Write(nudge); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-ctx.Done():
 			return
 		case event, open := <-events:
@@ -259,6 +289,8 @@ func (e *endpoints) pump(
 				return
 			}
 			flusher.Flush()
+			// 过一会儿把这一帧的尾巴带出去（见 nudge）。
+			tail = time.After(nudgeDelay)
 		case <-heartbeat.C:
 			if _, err := w.Write([]byte(": keep-alive\n\n")); err != nil {
 				return
@@ -275,9 +307,9 @@ func (e *endpoints) pump(
 //
 // **整帧一次写出，不能拆成几次 `Write`。** `net/http` 的响应体后面是一个
 // 2048 字节的 bufio：分几次写的话，超过它的那一帧会被切成多次 socket 写，
-// 而 WebKit 每次「有数据了」只读一次、不重新轮询 —— 后半截要等**下一条事件**
-// 才到得了 Console。这条流不做重放，安静时段里因此永远等不到
-// （Playwright 1.62 的 WebKit 实测，2026-08-05）。
+// 每一次都给了 WebKit 一个只交出开头的机会。
+//
+// 一次写出仍不足以让整帧当场到达 —— 尾巴由后面那个 nudge 帧带出去。
 func writeEvent(w http.ResponseWriter, event Event) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
