@@ -97,6 +97,9 @@ refactors appear only when they change a guarantee, a command, or a file on disk
   high advisory in both pnpm projects. The end-to-end project had never been audited
   at all, and had drifted fourteen minor versions behind while shipping an advisory
   about downloading browsers without verifying certificates.
+- `nanoid` is pinned to 3.3.17 or newer through a resolution override, closing
+  GHSA-2v37-7h3g-55p8. It reaches the project only as a build-time dependency of
+  Vite's PostCSS, and never ships in the console bundle.
 - An agent asking for a credential is judged in one place again. The MCP face kept a
   second keyword list of its own, which missed `read_api_key`, `read_private_key`,
   `read_passphrase` and `read_keychain_item` entirely.
